@@ -1,0 +1,68 @@
+active_provider: deepseek_v4_flash
+
+providers:
+  gpt_5_4_mini:
+    type: openai_compatible
+    label: GPT-5.4 Mini
+    description: 速度中等偏弱，但上下文容量较强，适合需要较长信息跨度的轻中度任务。
+    base_url: ${CX_BASE_URL}
+    api_key: ${CX_API_KEY}
+    chat_model: gpt-5.4-mini
+    timeout_seconds: 180
+    default_params:
+      temperature: 0.2
+      top_p: 0.8
+      max_tokens: 8192
+      stream: false
+  gpt_5_5:
+    type: openai_compatible
+    label: GPT-5.5
+    description: 旗舰级模型，能力和上下文都很强，但响应速度较慢，适合高复杂度任务。
+    base_url: ${CX_BASE_URL}
+    api_key: ${CX_API_KEY}
+    chat_model: gpt-5.5
+    timeout_seconds: 240
+    default_params:
+      temperature: 0.2
+      top_p: 0.8
+      max_tokens: 8192
+      stream: false
+  qwen_local:
+    type: openai_compatible
+    label: Qwen3.5
+    description: 部署在本地、成本低，但上下文容量相对较小，适合对数据隐私敏感的场景。
+    base_url: ${QWEN_BASE_URL}
+    api_key: ${QWEN_API_KEY}
+    chat_model: ${QWEN_CHAT_MODEL}
+    timeout_seconds: 120
+    default_params:
+      temperature: 0.2
+      top_p: 0.8
+      max_tokens: 2048
+      stream: false
+  deepseek_v4_flash:
+    type: openai_compatible
+    label: DeepSeek V4 Flash
+    description: 响应快、成本低，适合日常记录理解和高频轻量对话的效率型模型。
+    base_url: ${DEEPSEEK_BASE_URL}
+    api_key: ${DEEPSEEK_API_KEY}
+    chat_model: deepseek-v4-flash
+    timeout_seconds: 180
+    default_params:
+      temperature: 0.2
+      top_p: 0.8
+      max_tokens: 8192
+      stream: false
+  deepseek_v4_pro:
+    type: openai_compatible
+    label: DeepSeek V4 Pro
+    description: 推理能力强，适合长上下文、多步骤分析和复杂 Agent 判断的深度处理模型。
+    base_url: ${DEEPSEEK_BASE_URL}
+    api_key: ${DEEPSEEK_API_KEY}
+    chat_model: deepseek-v4-pro
+    timeout_seconds: 240
+    default_params:
+      temperature: 0.2
+      top_p: 0.8
+      max_tokens: 8192
+      stream: false

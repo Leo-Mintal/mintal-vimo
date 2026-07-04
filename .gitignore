@@ -1,0 +1,34 @@
+# OS
+.DS_Store
+
+# Local config and secrets
+.env
+.env.*
+!.env.example
+vimo-go/.env
+vimo-go/.env.*
+!vimo-go/.env.example
+vimo-go/configs/models.yaml
+vimo-web/.env
+vimo-web/.env.*
+!vimo-web/.env.example
+
+# Go
+vimo-go/bin/
+vimo-go/*.test
+
+# Frontend
+vimo-web/node_modules/
+vimo-web/dist/
+vimo-web/.vite/
+vimo-web/*.tsbuildinfo
+vimo-web/vite.config.js
+vimo-web/vite.config.d.ts
+
+# Local generated artifacts
+.playwright-cli/
+.learnings/
+tmp/
+
+# Logs
+*.log
