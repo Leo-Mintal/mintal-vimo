@@ -12,6 +12,7 @@
 - OpenAI Compatible `base_url` 可填写服务根地址，也可直接填写到 `/v1`，客户端会统一请求 `/chat/completions`。
 - `vimo-go/configs/models.example.yaml` 和 `vimo-go/.env.example` 只提交示例值。
 - 不在业务代码中写死真实模型服务地址和模型 ID。
+- 公开仓库中的示例模型服务地址只能使用公开占位或本机地址；本地/内网/公司网关地址必须放在未提交的 `vimo-go/.env` 或运行环境变量中。
 - 真实模型 API Key 只放本地 `vimo-go/.env` 或运行环境变量，不写入示例配置和业务代码。
 - `vimo-go/.env`、`vimo-go/configs/models.yaml`、`vimo-web/node_modules/`、`vimo-web/dist/`、`.playwright-cli/`、`.learnings/` 和 `tmp/` 必须保持 git ignored；上传 GitHub 前先做 secret scan 和 `git check-ignore` 抽查。
 - `vimo-web/.env.example` 只提交示例值；真实 `VITE_API_TOKEN` 不提交。

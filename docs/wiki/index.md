@@ -28,6 +28,7 @@ Mintal Vimo / 微默是一个极简 AI 记录 Demo。当前阶段验证文本输
 
 ## 最近更新记录
 
+- 2026-07-04：公开仓库上传前将示例模型地址和 Qwen fallback 默认地址改为公开安全占位/本机地址，避免提交内部服务域名或内网 IP。
 - 2026-07-04：Go 模块要求提升到 `go 1.25.11`，用于避开 `govulncheck` 报出的 Go 标准库已修复漏洞；本地旧工具链如需自动下载需启用 Go checksum database。
 - 2026-07-04：按当前需求彻底移除独立 model-test / 在线 eval 流程，删除 `vimo-go/cmd/eval`、`vimo-go/internal/agent/eval.go` 和 `vimo-go/internal/agent/evalcases/`，主流程仅保留服务、prompt 和单元测试链路。
 - 2026-07-04：`vimo-web` AI 回复设置面板改为紧凑样式，模型列表折叠为下拉选择，风格预设压缩为小型分段按钮，减少弹窗高度。

@@ -37,6 +37,7 @@
 - `vimo-go/internal/llm.Provider` 定义统一接口。
 - `vimo-go/internal/llm.Provider` 保留非流式 `Chat`；`vimo-go/internal/llm.StreamProvider` 是可选流式接口，用于快路承接输出。
 - `vimo-go/internal/llm/qwen.Client` 调用 OpenAI Compatible `/v1/chat/completions`，`base_url` 可配置为服务根地址或已经包含 `/v1` 的 OpenAI 标准地址；快路协议请求使用非流式 JSON mode，用户可见的逐字效果由后端解析完整 `text` 后通过业务 SSE 发送给前端。
+- 未加载模型配置文件时，Qwen fallback 默认地址使用本机 `http://127.0.0.1:8001`；真实内网模型网关应通过未提交的本地 env 覆盖。
 - `vimo-go/internal/agent.ModelRegistry` 根据 `vimo-go/configs/models.yaml` 注册多个模型 provider。
 - `vimo-go/internal/agent.Service` 不直接依赖模型地址或模型 ID；每次 `POST /api/agent/messages` 可通过 `model_key` 选择模型。
 - `POST /api/agent/fast-reply/stream` 是独立快路 SSE 接口，只读取当前输入、上下文、模型选择、`turn_id` 和 `reply_profile` 生成即时承接文本，不执行任何记录动作。后端用 OpenAI Compatible `response_format={"type":"json_object"}` 非流式请求快路模型拿到完整 `text/route`，只把解析后的 `text` 作为 `fast_delta` 展示给用户，并在 `fast_done.route` 中输出 `continue_slow` 或 `chat_only`。如果模型把协议 JSON 误放进 `text` 字段，后端只做协议解包；坏 JSON 会报错，不把半截 JSON 发到 UI。
