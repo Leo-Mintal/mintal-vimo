@@ -32,20 +32,25 @@ import type { FormEvent, ReactNode } from 'react';
 import { MessageBubble } from './MessageBubble';
 import { Composer } from './Composer';
 import { RecordCard } from '../RecordCard/RecordCard';
-import { listAgentModels, sendAgentFastReplyStream, sendAgentMessage } from '../../services/agent';
+import { listAgentModels, sendAgentMessageStream } from '../../services/agent';
 import { createRecord, listRecords, saveRecord, updateRecord, type RecordWriteInput } from '../../services/records';
-import type { AgentContextRecord, AgentIntent, AgentModelOption, ConversationMessage, CustomAgentModel, FieldRiskLevel, IntentItem, IntentTrace, PendingState, RecordAction, RecordCandidate, RecordPreview, RecordStatus, RecordType, ReplyPreset, ReplyProfile, RiskField, SettingsPatch, ThinkingPayload } from '../../types/agent';
+import type { AgentContextRecord, AgentIntent, AgentMessageResponse, AgentModelOption, ConversationMessage, CustomAgentModel, FieldRiskLevel, IntentItem, IntentTrace, PendingState, RecordAction, RecordCandidate, RecordPreview, RecordStatus, RecordType, ReplyPreset, ReplyProfile, RiskField, SettingsPatch, ThinkingPayload } from '../../types/agent';
 import type { RecordItem } from '../../types/record';
 
 interface Message {
   id: string;
   role: 'user' | 'assistant' | 'notice';
   content: string;
+  fastContent?: string;
+  slowContent?: string;
   createdAt: string;
   intent?: AgentIntent;
   pendingId?: string;
   preview?: RecordPreview;
   thinking?: ThinkingPayload | null;
+  thinkingStartedAt?: number;
+  thinkingFinishedAt?: number;
+  thinkingOpen?: boolean;
 }
 
 interface PendingPreviewItem {
@@ -87,7 +92,6 @@ const chatMessagesKey = 'vimo-web.chat-messages.v1';
 const openContextsKey = 'vimo-web.open-contexts.v1';
 const pendingPreviewsKey = 'vimo-web.pending-previews.v1';
 const activePendingKey = 'vimo-web.active-pending-id.v1';
-const fastReplyStartTimeoutMs = 600;
 const previousDefaultModelKey = 'gpt_5_4_mini';
 const maxClosedContexts = 30;
 
@@ -350,12 +354,15 @@ export function ChatAgent() {
       role: 'assistant',
       content: '',
       createdAt: formatLocalTimestamp(),
+      thinkingStartedAt: Date.now(),
     };
     mutateMessages((current) => [...current, userMessage, assistantMessage]);
     setLoading(true);
     setThinking(true);
     setError(null);
 
+    let doneReceived = false;
+    let shouldClearGenerationState = false;
     try {
       const pendingCount = pendingPreviews.length;
       const turnId = createId();
@@ -371,135 +378,112 @@ export function ChatAgent() {
         recent_messages: recentMessages,
         reply_profile: replyProfileFromSettings(settings),
       };
-      let fastReplyText = '';
-      let fastReplyState: 'started' | 'partial' | 'done' | 'failed' = 'started';
-      const fastReplyResult: { route: 'continue_slow' | 'chat_only' } = { route: 'continue_slow' };
-      let fastReplyHadError = false;
-      let acceptingFastDeltas = true;
+      const thinkingRequested = Boolean(request.thinking?.enabled);
+      let finalResponse: AgentMessageResponse | null = null;
+      let finalPreview: RecordPreview | null = null;
       let fastTypingTask = Promise.resolve();
-      let resolveFastStart: (() => void) | undefined;
-      let resolveFastFinished: (() => void) | undefined;
-      const fastStarted = new Promise<void>((resolve) => {
-        resolveFastStart = resolve;
-      });
-      const fastFinished = new Promise<void>((resolve) => {
-        resolveFastFinished = resolve;
-      });
-      const fastTask = sendAgentFastReplyStream(request, async (event) => {
+      let sequenceTask = Promise.resolve();
+      let slowThinkingReceived = false;
+      const completeGenerationFromServerDone = async () => {
+        await sequenceTask;
+        await fastTypingTask;
+        if (requestController.signal.aborted || generationTokenRef.current !== generationToken) {
+          return;
+        }
+        setThinking(false);
+        if (finalResponse && finalPreview) {
+          await streamAssistantFinalText(assistantId, finalResponse.message.content, generationToken);
+          if (requestController.signal.aborted || generationTokenRef.current !== generationToken) {
+            return;
+          }
+          const pendingId = await applyAgentPreview(finalPreview, latestOpenContext?.id ?? latestPending?.id ?? null, content, finalResponse.message.content);
+          updateAssistantMessage(assistantId, {
+            intent: finalPreview.intent,
+            pendingId,
+            preview: finalPreview,
+          });
+          if (pendingCount > 0 && !shouldShowPreview(finalPreview)) {
+            addNotice('上方还有待确认');
+          }
+        }
+        await sequenceTask;
+        if (requestController.signal.aborted || generationTokenRef.current !== generationToken) {
+          return;
+        }
+        finishAssistantThinking(assistantId);
+        doneReceived = true;
+      };
+
+      await sendAgentMessageStream(request, async (event) => {
         if (requestController.signal.aborted || generationTokenRef.current !== generationToken) {
           return;
         }
         if (event.type === 'fast_delta') {
-          fastReplyText += event.delta;
-          fastReplyState = 'partial';
-          resolveFastStart?.();
-          resolveFastStart = undefined;
-          if (acceptingFastDeltas) {
-            const delta = event.delta;
-            fastTypingTask = fastTypingTask.then(async () => {
-              await typeAssistantDelta(assistantId, delta, generationToken);
+          const delta = event.delta;
+          sequenceTask = sequenceTask.then(async () => {
+            await typeAssistantDelta(assistantId, 'fast', delta, generationToken);
+          });
+          fastTypingTask = sequenceTask;
+        }
+        if (event.type === 'fast_thinking' && thinkingRequested) {
+          sequenceTask = sequenceTask.then(async () => {
+            await streamAssistantThinkingPatch(assistantId, { fast: event.content }, generationToken);
+          });
+        }
+        if (event.type === 'slow_thinking' && thinkingRequested) {
+          slowThinkingReceived = Boolean(event.content.trim());
+          sequenceTask = sequenceTask.then(async () => {
+            await streamAssistantThinkingPatch(assistantId, { slow: event.content }, generationToken);
+          });
+        }
+        if (event.type === 'final') {
+          finalResponse = event.response;
+          finalPreview = normalizePreview(event.response.record_preview);
+          if (thinkingRequested) {
+            const thinkingPatch = slowThinkingReceived ? { fast: event.response.thinking?.fast } : event.response.thinking;
+            sequenceTask = sequenceTask.then(async () => {
+              await streamAssistantThinkingPatch(assistantId, thinkingPatch ?? null, generationToken);
             });
           }
         }
-        if (event.type === 'fast_thinking') {
-          mergeAssistantThinking(assistantId, { fast: event.content });
+        if (event.type === 'error') {
+          throw new Error(event.message);
         }
-        if (event.type === 'fast_done' || event.type === 'fast_error') {
-          if (event.type === 'fast_error') {
-            fastReplyHadError = true;
-            fastReplyState = fastReplyText.trim() ? 'partial' : 'failed';
-          } else if (!fastReplyHadError) {
-            fastReplyResult.route = event.route ?? 'continue_slow';
-            fastReplyState = fastReplyText.trim() ? 'done' : 'started';
-          }
-          resolveFastStart?.();
-          resolveFastStart = undefined;
-          resolveFastFinished?.();
-          resolveFastFinished = undefined;
+        if (event.type === 'done') {
+          await completeGenerationFromServerDone();
         }
-      }, requestController.signal).catch((error: unknown) => {
-        if (isAbortError(error)) {
-          resolveFastStart?.();
-          resolveFastStart = undefined;
-          resolveFastFinished?.();
-          resolveFastFinished = undefined;
-          return;
-        }
-        fastReplyHadError = true;
-        fastReplyState = fastReplyText.trim() ? 'partial' : 'failed';
-        resolveFastStart?.();
-        resolveFastStart = undefined;
-        resolveFastFinished?.();
-        resolveFastFinished = undefined;
-        // Fast reply is best effort. Slow path still owns the actual work and error UI.
-      });
-      await Promise.race([fastStarted, sleep(fastReplyStartTimeoutMs)]);
-      resolveFastStart?.();
-      resolveFastStart = undefined;
-      const fastContextText = fastReplyText.trim();
-      const slowRequest = {
-        ...request,
-        fast_reply_context: {
-          turn_id: turnId,
-          state: fastReplyState,
-          content: fastContextText,
-        },
-      };
-      const slowTask = sendAgentMessage(slowRequest, requestController.signal)
-        .then((response) => ({ response, error: null }))
-        .catch((error: unknown) => ({ response: null, error }));
-      await fastFinished;
-      const isChatOnly = fastReplyResult.route === 'chat_only' && !fastReplyHadError;
-      if (isChatOnly) {
-        requestController.abort();
-        void slowTask;
-        acceptingFastDeltas = false;
-        setThinking(false);
-        await fastTypingTask;
-        await fastTask;
-        return;
+      }, requestController.signal);
+      if (!doneReceived && !requestController.signal.aborted && generationTokenRef.current === generationToken) {
+        throw new Error('生成未正常完成');
       }
-      const slowOutcome = await slowTask;
-      if (slowOutcome.error) {
-        if (isAbortError(slowOutcome.error)) {
-          return;
-        }
-        throw slowOutcome.error;
-      }
-      if (requestController.signal.aborted || generationTokenRef.current !== generationToken) {
-        return;
-      }
-      const response = slowOutcome.response;
-      if (!response) {
-        throw new Error('慢路请求失败');
-      }
-      const responsePreview = normalizePreview(response.record_preview);
-      acceptingFastDeltas = false;
-      await fastTypingTask;
-      setThinking(false);
-      mergeAssistantThinking(assistantId, response.thinking ?? null);
-      await streamAssistantFinalText(assistantId, response.message.content, generationToken);
-      const pendingId = await applyAgentPreview(responsePreview, latestOpenContext?.id ?? latestPending?.id ?? null, content, response.message.content);
-      updateAssistantMessage(assistantId, {
-        intent: responsePreview.intent,
-        pendingId,
-        preview: responsePreview,
-      });
-      if (pendingCount > 0 && !shouldShowPreview(responsePreview)) {
-        addNotice('上方还有待确认');
-      }
-      await fastTask;
     } catch (err) {
       if (isAbortError(err)) {
         return;
       }
-      mutateMessages((current) => current.filter((message) => message.id !== assistantId || message.content.trim()));
+      shouldClearGenerationState = true;
+      mutateMessages((current) =>
+        current
+          .filter((message) => message.id !== assistantId || message.content.trim())
+          .map((message) =>
+            message.id === assistantId
+              ? {
+                  ...message,
+                  thinking: null,
+                  thinkingFinishedAt: undefined,
+                  thinkingOpen: false,
+                  thinkingStartedAt: undefined,
+                }
+              : message,
+          ),
+      );
       setError(err instanceof Error ? err.message : '请求失败');
     } finally {
-      if (generationTokenRef.current === generationToken) {
+      if (generationTokenRef.current === generationToken && (doneReceived || shouldClearGenerationState)) {
         activeAbortRef.current = null;
-        setThinking(false);
         setLoading(false);
+        if (shouldClearGenerationState) {
+          setThinking(false);
+        }
       }
     }
   }
@@ -513,21 +497,8 @@ export function ChatAgent() {
     setError(null);
   }
 
-  function appendAssistantDelta(messageId: string, delta: string) {
+  function appendAssistantDelta(messageId: string, channel: 'fast' | 'slow', delta: string) {
     if (!delta) {
-      return;
-    }
-    mutateMessages((current) => current.map((message) => (message.id === messageId ? { ...message, content: message.content + delta } : message)));
-  }
-
-  function updateAssistantMessage(messageId: string, patch: Partial<Message>) {
-    mutateMessages((current) => current.map((message) => (message.id === messageId ? { ...message, ...patch } : message)));
-  }
-
-  function mergeAssistantThinking(messageId: string, patch?: ThinkingPayload | null) {
-    const fast = patch?.fast?.trim();
-    const slow = patch?.slow?.trim();
-    if (!fast && !slow) {
       return;
     }
     mutateMessages((current) =>
@@ -535,15 +506,64 @@ export function ChatAgent() {
         if (message.id !== messageId) {
           return message;
         }
+        const fastContent = message.fastContent ?? '';
+        const slowContent = message.slowContent ?? '';
+        const contentSeparator = channel === 'slow' && !slowContent.trim() && fastContent.trim() ? '\n\n' : '';
+        return {
+          ...message,
+          content: message.content + contentSeparator + delta,
+          ...(channel === 'fast'
+            ? { fastContent: `${fastContent}${delta}` }
+            : { slowContent: `${slowContent}${delta}` }),
+        };
+      }),
+    );
+  }
+
+  function updateAssistantMessage(messageId: string, patch: Partial<Message>) {
+    mutateMessages((current) => current.map((message) => (message.id === messageId ? { ...message, ...patch } : message)));
+  }
+
+  function beginAssistantThinkingStream(messageId: string) {
+    mutateMessages((current) =>
+      current.map((message) => {
+        if (message.id !== messageId) {
+          return message;
+        }
+        return {
+          ...message,
+          thinkingOpen: true,
+          thinkingStartedAt: message.thinkingStartedAt ?? Date.now(),
+          thinking: message.thinking ?? {},
+        };
+      }),
+    );
+  }
+
+  function appendAssistantThinkingDelta(messageId: string, channel: keyof ThinkingPayload, delta: string) {
+    if (!delta) {
+      return;
+    }
+    mutateMessages((current) =>
+      current.map((message) => {
+        if (message.id !== messageId) {
+          return message;
+        }
+        const thinking = message.thinking ?? {};
         return {
           ...message,
           thinking: {
-            ...(message.thinking ?? {}),
-            ...(fast ? { fast } : {}),
-            ...(slow ? { slow } : {}),
+            ...thinking,
+            [channel]: `${thinking[channel] ?? ''}${delta}`,
           },
         };
       }),
+    );
+  }
+
+  function finishAssistantThinking(messageId: string) {
+    mutateMessages((current) =>
+      current.map((message) => (message.id === messageId && message.thinking ? { ...message, thinkingFinishedAt: Date.now() } : message)),
     );
   }
 
@@ -552,32 +572,62 @@ export function ChatAgent() {
     if (!text) {
       return;
     }
-    const current = messageContentById(messageId);
+    const current = messageSlowContentById(messageId).trim();
     if (text === current.trim()) {
       return;
     }
     if (current.trim() && text.startsWith(current.trim())) {
-      await typeAssistantDelta(messageId, text.slice(current.trim().length), generationToken);
+      await typeAssistantDelta(messageId, 'slow', text.slice(current.trim().length), generationToken);
       return;
     }
     if (current.trim()) {
-      await typeAssistantDelta(messageId, `\n\n${text}`, generationToken);
+      await typeAssistantDelta(messageId, 'slow', `\n\n${text}`, generationToken);
       return;
     }
-    await typeAssistantDelta(messageId, text, generationToken);
+    await typeAssistantDelta(messageId, 'slow', text, generationToken);
   }
 
-  function messageContentById(messageId: string) {
+  function messageSlowContentById(messageId: string) {
     const message = messagesRef.current.find((item) => item.id === messageId);
-    return message?.content ?? '';
+    return message?.slowContent ?? '';
   }
 
-  async function typeAssistantDelta(messageId: string, text: string, generationToken: number) {
+  function messageThinkingContentById(messageId: string, channel: keyof ThinkingPayload) {
+    const message = messagesRef.current.find((item) => item.id === messageId);
+    return message?.thinking?.[channel] ?? '';
+  }
+
+  async function streamAssistantThinkingPatch(messageId: string, patch: ThinkingPayload | null | undefined, generationToken: number) {
+    await streamAssistantThinkingText(messageId, 'fast', patch?.fast, generationToken);
+    await streamAssistantThinkingText(messageId, 'slow', patch?.slow, generationToken);
+  }
+
+  async function streamAssistantThinkingText(messageId: string, channel: keyof ThinkingPayload, rawText: string | undefined, generationToken: number) {
+    const text = rawText?.trim();
+    if (!text) {
+      return;
+    }
+    const current = messageThinkingContentById(messageId, channel).trim();
+    if (text === current) {
+      return;
+    }
+    const delta = current && text.startsWith(current) ? text.slice(current.length) : current ? `\n\n${text}` : text;
+    beginAssistantThinkingStream(messageId);
+    for (const char of Array.from(delta)) {
+      if (generationTokenRef.current !== generationToken || activeAbortRef.current?.signal.aborted) {
+        return;
+      }
+      appendAssistantThinkingDelta(messageId, channel, char);
+      await sleep(6);
+    }
+  }
+
+  async function typeAssistantDelta(messageId: string, channel: 'fast' | 'slow', text: string, generationToken: number) {
     for (const char of Array.from(text)) {
       if (generationTokenRef.current !== generationToken || activeAbortRef.current?.signal.aborted) {
         return;
       }
-      appendAssistantDelta(messageId, char);
+      appendAssistantDelta(messageId, channel, char);
       await sleep(12);
     }
   }
@@ -961,7 +1011,6 @@ export function ChatAgent() {
             modelOptions={modelOptions}
             onBack={() => setShellView('chat')}
             onSelectModel={selectModel}
-            onToggleThinking={toggleThinkingMode}
             onUpdateProfile={updateProfileSettings}
             settings={settings}
           />
@@ -995,7 +1044,7 @@ export function ChatAgent() {
                   if (message.role === 'notice') {
                     return <NoticeMessage content={message.content} key={message.id} />;
                   }
-                  if (message.role === 'assistant' && !message.content.trim() && !message.preview) {
+                  if (message.role === 'assistant' && !assistantHasVisibleContent(message)) {
                     return null;
                   }
                   return (
@@ -1003,6 +1052,8 @@ export function ChatAgent() {
                       <MessageBubble
                         beforeContent={message.role === 'assistant' && message.preview ? <IntentStackPanel preview={message.preview} onOpenPending={setActivePendingId} /> : undefined}
                         content={message.content}
+                        fastContent={message.role === 'assistant' ? message.fastContent : undefined}
+                        slowContent={message.role === 'assistant' ? message.slowContent : undefined}
                         thinking={message.role === 'assistant' ? message.thinking : undefined}
                         onCopy={() => copyText(message.content)}
                         onOpenPending={message.pendingId ? () => setActivePendingId(message.pendingId ?? null) : undefined}
@@ -1514,7 +1565,6 @@ function SettingsView({
   modelOptions,
   onBack,
   onSelectModel,
-  onToggleThinking,
   onUpdateProfile,
   settings,
 }: {
@@ -1522,13 +1572,11 @@ function SettingsView({
   modelOptions: AgentModelOption[];
   onBack: () => void;
   onSelectModel: (modelKey: string) => void;
-  onToggleThinking: (enabled: boolean) => void;
   onUpdateProfile: (patch: Partial<Pick<AgentSettings, 'preset' | 'custom_style' | 'nickname'>>) => void;
   settings: AgentSettings;
 }) {
   const allModels = useMemo(() => combineAgentModels(modelOptions, customModels), [customModels, modelOptions]);
   const selectedModel = allModels.find((model) => model.key === settings.model_key) ?? allModels.find((model) => model.default) ?? allModels[0];
-  const canThink = Boolean(selectedModel?.supports_thinking);
   const presets: Array<{ value: ReplyPreset; label: string }> = [
     { value: 'INTJ', label: 'INTJ' },
     { value: 'ENFJ', label: 'ENFJ' },
@@ -1608,7 +1656,6 @@ function SettingsView({
                         <span className="block truncate text-[13px] font-semibold text-[var(--text-strong)]">{model.label}</span>
                         <span className="block truncate text-[11px] font-medium text-[var(--text-muted)]">{model.description || model.model}</span>
                       </span>
-                      {model.supports_thinking ? <Brain size={14} className="shrink-0 text-[var(--accent)]" /> : null}
                       {selected ? <CheckCircle2 size={16} className="shrink-0 text-[var(--accent)]" /> : null}
                     </button>
                   );
@@ -1617,24 +1664,6 @@ function SettingsView({
                 <div className="rounded-[12px] bg-[var(--surface-soft)] px-3 py-3 text-xs font-semibold text-[var(--text-muted)]">模型列表加载中</div>
               )}
             </div>
-            {canThink ? (
-              <button
-                aria-pressed={settings.thinking_enabled}
-                className="settings-toggle-row"
-                data-active={settings.thinking_enabled}
-                onClick={() => onToggleThinking(!settings.thinking_enabled)}
-                type="button"
-              >
-                <span className="grid h-8 w-8 place-items-center rounded-[10px] bg-[var(--accent-soft)] text-[var(--accent)]">
-                  <Brain size={15} />
-                </span>
-                <span className="min-w-0 flex-1 text-left">
-                  <span className="block text-[13px] font-semibold text-[var(--text-strong)]">思考模式</span>
-                  <span className="block text-[11px] font-medium text-[var(--text-muted)]">请求并展示模型返回的 reasoning</span>
-                </span>
-                <span className="settings-toggle-knob" />
-              </button>
-            ) : null}
           </section>
         </div>
       </div>
@@ -2572,6 +2601,17 @@ function recentConversationMessages(messages: Message[]): ConversationMessage[] 
     }));
 }
 
+function assistantHasVisibleContent(message: Message) {
+  return Boolean(
+    message.content.trim() ||
+      message.fastContent?.trim() ||
+      message.slowContent?.trim() ||
+      message.thinking?.fast?.trim() ||
+      message.thinking?.slow?.trim() ||
+      message.preview,
+  );
+}
+
 function contextRecordFromPendingPreview(item: PendingPreviewItem): AgentContextRecord {
   return {
     ...contextRecordFromPreview(item.preview, item.id),
@@ -3135,15 +3175,25 @@ function normalizeStoredMessage(value: unknown): Message | null {
   if (typeof item.id !== 'string' || (item.role !== 'user' && item.role !== 'assistant' && item.role !== 'notice') || typeof item.content !== 'string') {
     return null;
   }
+  const createdAt = typeof item.createdAt === 'string' ? formatDisplayTimestamp(item.createdAt) : formatLocalTimestamp();
+  const thinking = normalizeThinkingPayload(item.thinking);
+  const fallbackThinkingTime = timestampValue(createdAt) || undefined;
+  const fastContent = typeof item.fastContent === 'string' ? item.fastContent : undefined;
+  const slowContent = typeof item.slowContent === 'string' ? item.slowContent : item.role === 'assistant' && !fastContent ? item.content : undefined;
   return {
     id: item.id,
     role: item.role,
     content: item.content,
-    createdAt: typeof item.createdAt === 'string' ? formatDisplayTimestamp(item.createdAt) : formatLocalTimestamp(),
+    fastContent,
+    slowContent,
+    createdAt,
     intent: isAgentIntent(item.intent) ? item.intent : undefined,
     pendingId: typeof item.pendingId === 'string' ? item.pendingId : undefined,
     preview: item.preview ? normalizePreview(item.preview) : undefined,
-    thinking: normalizeThinkingPayload(item.thinking),
+    thinking,
+    thinkingFinishedAt: typeof item.thinkingFinishedAt === 'number' ? item.thinkingFinishedAt : thinking ? fallbackThinkingTime : undefined,
+    thinkingOpen: false,
+    thinkingStartedAt: typeof item.thinkingStartedAt === 'number' ? item.thinkingStartedAt : thinking ? fallbackThinkingTime : undefined,
   };
 }
 

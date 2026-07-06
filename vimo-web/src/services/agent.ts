@@ -5,94 +5,18 @@ export function listAgentModels() {
   return requestJSON<AgentModelsResponse>('/api/agent/models');
 }
 
-export function sendAgentMessage(request: AgentMessageRequest, signal?: AbortSignal) {
-  return requestJSON<AgentMessageResponse>('/api/agent/messages', {
-    method: 'POST',
-    body: JSON.stringify(request),
-    signal,
-  }).catch((error: unknown) => {
-    if (!shouldRetryWithoutRecentMessages(error, request)) {
-      throw error;
-    }
-    return requestJSON<AgentMessageResponse>('/api/agent/messages', {
-      method: 'POST',
-      body: JSON.stringify(withoutRecentMessages(request)),
-      signal,
-    });
-  });
-}
-
 export async function sendAgentMessageStream(
   request: AgentMessageRequest,
   onEvent: (event: AgentStreamEvent) => void | Promise<void>,
   signal?: AbortSignal,
 ) {
-  const response = await fetch(`${API_BASE}/api/agent/messages/stream`, {
-    method: 'POST',
-    headers: apiHeaders({ Accept: 'text/event-stream' }),
-    body: JSON.stringify(request),
-    signal,
-  });
-
-  if (!response.ok) {
-    let message = `请求失败：${response.status}`;
-    try {
-      const body = (await response.json()) as { error?: { message?: string } };
-      if (body.error?.message) {
-        message = body.error.message;
-      }
-    } catch {
-      // Keep the status-based message when the stream endpoint did not return JSON.
-    }
-    throw new Error(message);
-  }
-  if (!response.body) {
-    throw new Error('浏览器不支持流式响应');
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      const events = splitSSEEvents(buffer);
-      buffer = events.rest;
-      for (const eventText of events.items) {
-        const event = parseSSEEvent(eventText);
-        if (event) {
-          await onEvent(event);
-        }
-      }
-    }
-    buffer += decoder.decode();
-    if (buffer.trim()) {
-      const event = parseSSEEvent(buffer);
-      if (event) {
-        await onEvent(event);
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-export async function sendAgentFastReplyStream(
-  request: AgentMessageRequest,
-  onEvent: (event: AgentStreamEvent) => void | Promise<void>,
-  signal?: AbortSignal,
-) {
-  try {
-    return await readAgentEventStream('/api/agent/fast-reply/stream', request, onEvent, signal);
+    return await readAgentEventStream('/api/agent/messages/stream', request, onEvent, signal);
   } catch (error) {
     if (!shouldRetryWithoutRecentMessages(error, request)) {
       throw error;
     }
-    return readAgentEventStream('/api/agent/fast-reply/stream', withoutRecentMessages(request), onEvent, signal);
+    return readAgentEventStream('/api/agent/messages/stream', withoutRecentMessages(request), onEvent, signal);
   }
 }
 
@@ -199,6 +123,8 @@ function parseSSEEvent(raw: string): AgentStreamEvent | null {
       };
     case 'fast_error':
       return { type: 'fast_error', message: typeof data.message === 'string' ? data.message : '快路请求失败' };
+    case 'slow_thinking':
+      return { type: 'slow_thinking', content: typeof data.content === 'string' ? data.content : '' };
     case 'final':
       return { type: 'final', response: data as unknown as AgentMessageResponse };
     case 'done':

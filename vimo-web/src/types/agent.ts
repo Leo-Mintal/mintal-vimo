@@ -227,6 +227,7 @@ export type AgentStreamEvent =
   | { type: 'fast_thinking'; content: string }
   | { type: 'fast_done'; route?: FastReplyRoute }
   | { type: 'fast_error'; message: string }
+  | { type: 'slow_thinking'; content: string }
   | { type: 'final'; response: AgentMessageResponse }
   | { type: 'done' }
   | { type: 'error'; message: string };

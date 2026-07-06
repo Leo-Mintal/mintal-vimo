@@ -63,12 +63,13 @@ func (s *Service) Analyze(ctx context.Context, req AnalyzeRequest) (*Result, err
 	if err != nil {
 		return nil, err
 	}
+	thinking := s.thinkingOptionsForRequest(req, providerKey)
 	resp, err := provider.Chat(ctx, llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: s.systemPrompt},
 			{Role: "user", Content: string(promptJSON)},
 		},
-		Thinking: s.thinkingOptionsForRequest(req, providerKey),
+		Thinking: thinking,
 		Stream:   false,
 	})
 	if err != nil {
@@ -82,7 +83,7 @@ func (s *Service) Analyze(ctx context.Context, req AnalyzeRequest) (*Result, err
 
 	pending := pendingContextForResult(result, promptPayload.OpenContexts, req.PendingRecord)
 	normalizeResultWithTime(result, promptPayload.Message, pending, promptPayload.Now, promptPayload.Timezone)
-	result.Reasoning = strings.TrimSpace(resp.Reasoning)
+	result.Reasoning = reasoningForEnabledThinking(resp.Reasoning, thinking)
 	if strings.TrimSpace(result.Reply) == "" {
 		return nil, fmt.Errorf("agent reply is empty")
 	}
@@ -168,6 +169,13 @@ func (s *Service) thinkingOptionsForRequest(req AnalyzeRequest, providerKey stri
 	return &llm.ThinkingOptions{Enabled: true}
 }
 
+func reasoningForEnabledThinking(reasoning string, thinking *llm.ThinkingOptions) string {
+	if thinking == nil || !thinking.Enabled {
+		return ""
+	}
+	return strings.TrimSpace(reasoning)
+}
+
 func (s *Service) modelSupportsThinking(req AnalyzeRequest, providerKey string) bool {
 	if req.CustomModel != nil && strings.TrimSpace(req.CustomModel.Key) == strings.TrimSpace(providerKey) {
 		return req.CustomModel.SupportsThinking
@@ -223,6 +231,7 @@ func providerFromCustomModel(custom *CustomModelConfig) (llm.Provider, string, e
 
 func (s *Service) sendFastReplyWithProvider(ctx context.Context, provider llm.Provider, req AnalyzeRequest, providerKey string, promptJSON []byte, maxTokens int, onDelta func(string) error) (*FastReplyResult, error) {
 	temp := 0.1
+	thinking := s.thinkingOptionsForRequest(req, providerKey)
 	resp, err := provider.Chat(ctx, llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: s.fastReplyPrompt},
@@ -231,7 +240,7 @@ func (s *Service) sendFastReplyWithProvider(ctx context.Context, provider llm.Pr
 		Temperature:    &temp,
 		MaxTokens:      &maxTokens,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-		Thinking:       s.thinkingOptionsForRequest(req, providerKey),
+		Thinking:       thinking,
 		Stream:         false,
 	})
 	if err != nil {
@@ -244,7 +253,7 @@ func (s *Service) sendFastReplyWithProvider(ctx context.Context, provider llm.Pr
 	if result.Text == "" {
 		return nil, fmt.Errorf("fast reply is empty")
 	}
-	result.Reasoning = strings.TrimSpace(resp.Reasoning)
+	result.Reasoning = reasoningForEnabledThinking(resp.Reasoning, thinking)
 	if err := onDelta(result.Text); err != nil {
 		return nil, err
 	}

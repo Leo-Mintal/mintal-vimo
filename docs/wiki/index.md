@@ -29,6 +29,15 @@ Mintal Vimo / 微默是一个极简 AI 记录 Demo。当前阶段验证文本输
 
 ## 最近更新记录
 
+- 2026-07-06：`vimo-go` 统一流事件顺序改为 `fast_thinking -> fast_delta -> slow_thinking -> final -> done`；`vimo-web` 按“快路思考-快路回复-慢路思考-慢路回复”分段即时渲染。
+- 2026-07-06：`vimo-web` 思考过程正文改为视觉层逐字渲染：后端仍通过 `fast_thinking` / `final.thinking` 返回完整 reasoning，前端收到后用本地队列流式显示，完成状态仍等待服务端 `done`。
+- 2026-07-06：`vimo-web` 发送消息改为只消费后端统一 `POST /api/agent/messages/stream`，成功收尾统一依赖服务端 `done` 事件，快路 `chat_only` 也能结束等待态和思考计时。
+- 2026-07-06：移除设置页模型列表中的思考模式入口和模型能力图标；思考开关只保留在输入框内，模型设置页只负责选择模型。
+- 2026-07-06：`vimo-web` 思考面板改为耗时状态行：生成中显示“处理中 Ns”，最终回复完成后显示“已处理 Ns”，展开后直接展示 reasoning 正文，不再显示快路/慢路标题。
+- 2026-07-06：收紧思考过程展示门控：只有本轮请求明确开启 `thinking.enabled=true` 时，后端才保留 provider reasoning，前端才展示“思考过程”；关闭或未暴露开关时丢弃模型默认 reasoning。
+- 2026-07-06：将 `deepseek_v4_flash` 标记为支持思考模式，输入框选择 DeepSeek V4 Flash 时会暴露“思考”开关；关闭不发送 thinking，请求开启才透传 `thinking.enabled=true`。
+- 2026-07-06：调整 `vimo-web` 思考过程面板：收到快路/慢路 reasoning 时可展开查看，慢路最终回复输出完成后自动收起，历史消息恢复时默认收起。
+- 2026-07-06：修复 `vimo-web` 快路 `chat_only` 闲聊只显示首字的问题：前端区分内部取消慢路和用户手动停止，内部取消不截断快路逐字渲染，用户停止仍会中断整轮生成。
 - 2026-07-06：`vimo-web` 主页面改为 Codex-like 三栏工作台：左侧只保留搜索、定时任务和个人资料入口，个人资料进入中间设置页，右侧记录面板按 tab 做分类型预览。
 - 2026-07-06：补齐模型思考模式链路：模型配置和自定义模型可声明 `supports_thinking`，输入框按能力显示思考开关，快路/慢路请求会透传 `thinking.enabled` 并展示 provider 返回的 reasoning；刷新成功不再 toast，清空聊天改为二次确认。
 - 2026-07-06：新增 `docs/wiki/runtime-skills-autonomy-plan.md`，沉淀未来让 Agent 通过结构化 `skill_request` 请求 runtime skills、由后端 registry 和 Safety Gate 安全启用的方案；当前未改运行时代码，正式实现前需同步 PRD。

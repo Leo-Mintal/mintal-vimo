@@ -86,8 +86,8 @@ func (h *Handler) AgentFastReplyStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	result, err := h.agent.StreamFastReply(r.Context(), req, func(delta string) error {
-		return writeSSE(w, flusher, "fast_delta", map[string]string{"delta": delta})
+	result, err := h.agent.StreamFastReply(r.Context(), req, func(string) error {
+		return nil
 	})
 	if err != nil {
 		log.Printf("agent fast reply failed: %v", err)
@@ -99,6 +99,7 @@ func (h *Handler) AgentFastReplyStream(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(result.Reasoning) != "" {
 			_ = writeSSE(w, flusher, "fast_thinking", map[string]string{"content": result.Reasoning})
 		}
+		_ = writeSSE(w, flusher, "fast_delta", map[string]string{"delta": result.Text})
 	}
 	_ = writeSSE(w, flusher, "fast_done", map[string]any{"ok": true, "route": route})
 }
@@ -143,8 +144,8 @@ func (h *Handler) AgentMessageStream(w http.ResponseWriter, r *http.Request) {
 		return writeSSE(w, flusher, event, value)
 	}
 
-	fastResult, err := h.agent.StreamFastReply(r.Context(), req, func(delta string) error {
-		return writeEvent("fast_delta", map[string]string{"delta": delta})
+	fastResult, err := h.agent.StreamFastReply(r.Context(), req, func(string) error {
+		return nil
 	})
 	if err != nil {
 		log.Printf("agent fast reply failed: %v", err)
@@ -158,6 +159,9 @@ func (h *Handler) AgentMessageStream(w http.ResponseWriter, r *http.Request) {
 			if err := writeEvent("fast_thinking", map[string]string{"content": fastResult.Reasoning}); err != nil {
 				return
 			}
+		}
+		if err := writeEvent("fast_delta", map[string]string{"delta": fastResult.Text}); err != nil {
+			return
 		}
 	}
 	if err := writeEvent("fast_done", map[string]any{"ok": true, "route": fastRoute}); err != nil {
@@ -173,6 +177,11 @@ func (h *Handler) AgentMessageStream(w http.ResponseWriter, r *http.Request) {
 		log.Printf("agent analyze failed: %v", slow.err)
 		_ = writeEvent("error", map[string]string{"message": publicErrorMessage(http.StatusBadGateway)})
 		return
+	}
+	if strings.TrimSpace(slow.result.Reasoning) != "" {
+		if err := writeEvent("slow_thinking", map[string]string{"content": slow.result.Reasoning}); err != nil {
+			return
+		}
 	}
 
 	if err := writeEvent("final", map[string]any{

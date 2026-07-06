@@ -7,7 +7,7 @@
 ## 主要组件
 
 - `ChatAgent`：管理 Codex-like 三栏工作台、消息流、发送输入、复制/重试消息、清空会话、设置页入口，以及右侧 Records API 记录预览面板。
-- `Composer`：底部输入框、内嵌模型选择菜单、思考模式开关、自定义模型弹窗、发送/停止生成按钮。
+- `Composer`：底部输入框、内嵌模型选择菜单、思考模式开关、自定义模型弹窗、发送/停止生成按钮；思考开关只在输入框内展示。
 - `RecordCard`：展示识别结果，支持编辑、保存、丢弃，使用 icon 优先的轻量确认面板。
 - `MobileShell`：页面安全区容器；当前主界面不再用外层最大宽度面板包住，桌面布局由 `ChatAgent` 内部 grid 控制。
 
@@ -18,12 +18,13 @@
 - 左侧“定时任务”入口会切换到右侧待办 tab 并进入定时任务 scope，仅展示带提醒或时间的待办；右侧 tab 或搜索会回到普通记录浏览。
 - PC 会话区、用户消息气泡、AI 直排回复、输入区和记录确认卡使用简洁克制的中高密度布局，输入框参考 Claude 风格，模型选择放在输入框内部。
 - 每条用户消息和 AI 消息下方显示本地发送日期时间，便于追溯会话。
-- 发送 Agent 消息时会为本轮生成 `turn_id`，先调用 `POST /api/agent/fast-reply/stream` 负责快路承接；前端收到 `fast_delta` 后立即更新同一条 AI 回复，并在视觉层逐字渲染。
-- 前端在快路首字返回或短超时后启动 `POST /api/agent/messages` 慢路执行，慢路请求会携带 `fast_reply_context`，内容是同一 `turn_id` 下已展示或已收到的快路承接文本；慢路结果不会打断快路文字渲染。
-- 快路 `fast_done.route=chat_only` 时，前端只保留快路闲聊回复，并中止或丢弃同轮慢路结果，不生成意图栈、记录卡或待确认项。
-- 快路文字输出期间，`ThinkingBubble` 以无头像、无气泡的“正在思考”文字展示，扫光只裁剪在文字字形内；`route=chat_only` 时快路完成后立即隐藏等待态，`route=continue_slow` 时慢路 `final` 事件返回并开始输出最终回复首字时才隐藏等待态。
-- 若当前模型声明 `supports_thinking=true` 且输入框内“思考”开关开启，前端会在快路和慢路请求中发送 `thinking.enabled=true`；只有 provider 实际返回 reasoning 时，AI 消息上方才展示可折叠“思考过程”，并按 `快路思考` / `慢路思考` 分段显示。
-- 慢路 `final` 事件返回后，前端用最终 `message.content` 校准同一条 AI 回复，再执行原有 `record_preview` 自动保存、候选卡和待确认逻辑。
+- 发送 Agent 消息时会为本轮生成 `turn_id`，统一调用 `POST /api/agent/messages/stream`；前端收到 `fast_thinking`、`fast_delta`、`slow_thinking` 和 `final` 后按“快路思考-快路回复-慢路思考-慢路回复”分段逐字渲染。
+- `POST /api/agent/messages/stream` 由服务端统一编排快路和慢路，前端不再分别启动快路接口和慢路接口；`final` 事件只缓存慢路结果，成功完成只以服务端 `done` 事件为准。
+- 快路 `chat_only` 时，服务端会在快路结束后发送 `done`，前端只保留快路闲聊回复，不生成意图栈、记录卡或待确认项。
+- 用户点击停止生成会 abort 当前统一流式请求，并同时中断快路、慢路和本地逐字渲染。
+- 快路文字输出期间，`ThinkingBubble` 以无头像、无气泡的“正在思考”文字展示，扫光只裁剪在文字字形内；前端收到服务端 `done` 后才隐藏等待态并恢复输入状态。
+- 若当前模型声明 `supports_thinking=true`，输入框会暴露“思考”开关；关闭时前端不发送 `thinking`，开启时会在请求中发送 `thinking.enabled=true`。只有本轮明确开启思考且 provider 实际返回 reasoning 时，AI 消息内才展示“快路思考”和“慢路思考”段落；后端通过 `fast_thinking` 和 `slow_thinking` 返回完整 reasoning 字符串，前端收到后用本地队列逐字渲染。旧后端只在 `final.thinking` 返回慢路 reasoning 时，前端仍兼容显示一次。未开启时即使旧后端或模型返回 thinking 事件也会被前端忽略。
+- 慢路 `final` 事件返回后，前端先缓存最终 `message.content` 和 `record_preview`；收到同轮 `done` 后再校准同一条 AI 回复，并执行自动保存、候选卡和待确认逻辑。
 - 右侧面板通过 tab 切换 `全部`、`待办`、`想法`、`备忘`、`日记`、`确认`、`回收`；`待办`、`想法`、`备忘`、`日记` 在对应 tab 内使用不同预览布局，通用 tab 仍使用统一记录行。
 - 记录通过 Records API 读写；后端可配置 MySQL 持久化，未配置时使用内存仓储。
 - 浏览器 `localStorage` 的 `vimo-web.records.v1` 只作为旧数据一次性导入来源和记录服务不可用时的本地兜底缓存。
@@ -59,6 +60,7 @@
 - 输入框上方不再展示快捷类型按钮；新增记录、分类、确认等入口只通过自然语言与模型交互触发。
 - AI 回复偏好保存在 `localStorage`，key 为 `vimo-web.agent-settings.v1`，包含模型选择、回复预设、自定义风格、称呼和 `thinking_enabled`；内置预设仍为 `INTJ`、`ENFJ`、`ISTP`、`ENFP` 和 `custom`，旧 preset 会迁移到最接近的 MBTI-style 预设。
 - 模型选择入口从独立 AI 设置面板移动到输入框内部；内置模型来自 `GET /api/agent/models`，默认模型由后端配置决定，用户显式选择后每次发送会带上对应 `model_key` 热切换。
+- 设置页模型列表只负责选择模型，不展示思考开关或思考能力图标；思考模式通过输入框内开关控制。
 - 自定义模型保存在 `localStorage` 的 `vimo-web.custom-models.v1`，字段包含本地 key、显示名称、OpenAI-compatible API URL、API key、模型名称、超时时间和 `supports_thinking`；发送时只在当前请求中透传匹配的 `custom_model` 给后端。
 - 消息生成中时，输入框发送按钮切换为停止按钮；点击会 abort 当前快路/慢路请求并停止本地逐字渲染，保留已生成文本并恢复可输入状态。
 - Agent 返回 `intent=config_update` 和 `settings_patch` 时，前端更新全局 AI 设置并持久化到 `localStorage`，不展示记录确认卡、不写入沉淀记录；其中 `settings_patch.model_key` 必须命中 `GET /api/agent/models` 返回的模型 key，否则忽略。

@@ -44,6 +44,7 @@ providers:
     type: openai_compatible
     label: DeepSeek V4 Flash
     description: 响应快、成本低，适合日常记录理解和高频轻量对话的效率型模型。
+    supports_thinking: true
     base_url: ${DEEPSEEK_BASE_URL}
     api_key: ${DEEPSEEK_API_KEY}
     chat_model: deepseek-v4-flash

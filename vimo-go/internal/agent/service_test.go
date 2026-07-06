@@ -1410,6 +1410,39 @@ func TestStreamFastReplyPassesThinkingWhenModelSupportsIt(t *testing.T) {
 	}
 }
 
+func TestStreamFastReplyDropsReasoningWhenThinkingDisabled(t *testing.T) {
+	provider := &stubProvider{
+		responses:  []string{`{"text":"我会继续处理。","route":"continue_slow"}`},
+		reasonings: []string{"provider 默认返回的快路思考。"},
+	}
+	service := NewServiceWithPrompts(&ModelRegistry{
+		activeKey: "fast",
+		options: []ModelOption{
+			{Key: "fast", Label: "Fast", Default: true, SupportsThinking: true},
+		},
+		providers: map[string]llm.Provider{
+			"fast": provider,
+		},
+	}, "system prompt", "fast reply prompt")
+
+	result, err := service.StreamFastReply(context.Background(), AnalyzeRequest{
+		Message:  "晚上八点提醒我洗衣服",
+		Timezone: "Asia/Shanghai",
+	}, func(string) error {
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("StreamFastReply() error = %v", err)
+	}
+	if provider.requests[0].Thinking != nil {
+		t.Fatalf("Thinking = %#v, want nil when disabled", provider.requests[0].Thinking)
+	}
+	if result.Reasoning != "" {
+		t.Fatalf("Reasoning = %q, want empty when thinking disabled", result.Reasoning)
+	}
+}
+
 func TestAnalyzeSkipsThinkingWhenModelDoesNotSupportIt(t *testing.T) {
 	provider := &stubProvider{responses: []string{`{
 		"type":"unknown",
@@ -1449,6 +1482,53 @@ func TestAnalyzeSkipsThinkingWhenModelDoesNotSupportIt(t *testing.T) {
 	}
 	if provider.requests[0].Thinking != nil {
 		t.Fatalf("Thinking = %#v, want nil for unsupported model", provider.requests[0].Thinking)
+	}
+}
+
+func TestAnalyzeDropsReasoningWhenThinkingDisabled(t *testing.T) {
+	provider := &stubProvider{
+		responses: []string{`{
+		"type":"unknown",
+		"title":"聊天",
+		"content":"用户输入",
+		"datetime_text":null,
+		"datetime_iso":null,
+		"need_reminder":false,
+		"confidence":0.8,
+		"status":"ready",
+		"missing_fields":[],
+		"reply":"ok",
+		"intent":"answer_query",
+		"record_action":"none",
+		"target_id":null,
+		"related_ids":[],
+		"should_preview":false
+	}`},
+		reasonings: []string{"provider 默认返回的慢路思考。"},
+	}
+	service := NewServiceWithModels(&ModelRegistry{
+		activeKey: "thinker",
+		options: []ModelOption{
+			{Key: "thinker", Label: "Thinker", Default: true, SupportsThinking: true},
+		},
+		providers: map[string]llm.Provider{
+			"thinker": provider,
+		},
+	}, "system prompt")
+
+	result, err := service.Analyze(context.Background(), AnalyzeRequest{
+		Message:  "用户输入",
+		Timezone: "Asia/Shanghai",
+	})
+
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	if provider.requests[0].Thinking != nil {
+		t.Fatalf("Thinking = %#v, want nil when disabled", provider.requests[0].Thinking)
+	}
+	if result.Reasoning != "" {
+		t.Fatalf("Reasoning = %q, want empty when thinking disabled", result.Reasoning)
 	}
 }
 

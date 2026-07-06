@@ -1,10 +1,12 @@
-import { Brain, Copy, Edit3, RotateCcw, UserRound } from 'lucide-react';
+import { Copy, Edit3, RotateCcw, UserRound } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { ThinkingPayload } from '../../types/agent';
 
 interface MessageBubbleProps {
   role: 'user' | 'assistant';
   content: string;
+  fastContent?: string;
+  slowContent?: string;
   compact?: boolean;
   beforeContent?: ReactNode;
   thinking?: ThinkingPayload | null;
@@ -14,24 +16,47 @@ interface MessageBubbleProps {
   onRetry?: () => void;
 }
 
-export function MessageBubble({ role, content, compact, beforeContent, thinking, timestamp, onCopy, onOpenPending, onRetry }: MessageBubbleProps) {
+export function MessageBubble({
+  role,
+  content,
+  fastContent,
+  slowContent,
+  compact,
+  beforeContent,
+  thinking,
+  timestamp,
+  onCopy,
+  onOpenPending,
+  onRetry,
+}: MessageBubbleProps) {
   const isUser = role === 'user';
+  const fastReply = fastContent?.trim() ?? '';
+  const slowReply = slowContent?.trim() ?? '';
+  const shouldShowAssistantFlow = !isUser && !compact && (Boolean(thinking?.fast?.trim()) || Boolean(fastReply) || Boolean(thinking?.slow?.trim()) || Boolean(slowReply));
   return (
     <div className={`group flex gap-1.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div className={`flex flex-col ${isUser ? 'max-w-[72%] items-end' : 'max-w-[min(78%,720px)] items-start'}`}>
         {!isUser && beforeContent ? <div className="mb-1 w-full">{beforeContent}</div> : null}
-        {!isUser && thinking ? <ThinkingPanel thinking={thinking} /> : null}
-        <div
-          className={`whitespace-pre-wrap text-[13px] leading-5 transition ${
-            isUser
-              ? 'rounded-[16px] rounded-br-[6px] bg-[var(--text-strong)] px-3 py-1.5 text-[var(--app-bg)] shadow-sm'
-              : compact
-                ? 'py-0.5 text-[var(--text-muted)]'
-                : 'py-0.5 text-[var(--text-strong)]'
-          }`}
-        >
-          {content}
-        </div>
+        {shouldShowAssistantFlow ? (
+          <AssistantFlow
+            fastReply={fastReply}
+            fastThinking={thinking?.fast ?? ''}
+            slowReply={slowReply}
+            slowThinking={thinking?.slow ?? ''}
+          />
+        ) : (
+          <div
+            className={`whitespace-pre-wrap text-[13px] leading-5 transition ${
+              isUser
+                ? 'rounded-[16px] rounded-br-[6px] bg-[var(--text-strong)] px-3 py-1.5 text-[var(--app-bg)] shadow-sm'
+                : compact
+                  ? 'py-0.5 text-[var(--text-muted)]'
+                  : 'py-0.5 text-[var(--text-strong)]'
+            }`}
+          >
+            {content}
+          </div>
+        )}
         {onOpenPending && !isUser ? (
           <button
             className="mt-1 inline-flex items-center gap-1 rounded-[9px] border border-[var(--border-subtle)] bg-[var(--warning-soft)] px-2 py-1 text-[11px] font-bold text-[var(--warning)] shadow-sm transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-strong)]"
@@ -63,29 +88,33 @@ export function MessageBubble({ role, content, compact, beforeContent, thinking,
   );
 }
 
-function ThinkingPanel({ thinking }: { thinking: ThinkingPayload }) {
-  const parts = [
-    thinking.fast?.trim() ? { key: 'fast', label: '快路思考', content: thinking.fast.trim() } : null,
-    thinking.slow?.trim() ? { key: 'slow', label: '慢路思考', content: thinking.slow.trim() } : null,
-  ].filter((item): item is { key: string; label: string; content: string } => Boolean(item));
-  if (!parts.length) {
-    return null;
-  }
+function AssistantFlow({
+  fastReply,
+  fastThinking,
+  slowReply,
+  slowThinking,
+}: {
+  fastReply: string;
+  fastThinking: string;
+  slowReply: string;
+  slowThinking: string;
+}) {
   return (
-    <details className="thinking-panel mb-2" open>
-      <summary>
-        <Brain size={13} />
-        <span>思考过程</span>
-      </summary>
-      <div className="grid gap-2 px-3 pb-3 pt-1">
-        {parts.map((part) => (
-          <div key={part.key}>
-            <div className="mb-1 text-[10px] font-bold uppercase tracking-normal text-[var(--text-faint)]">{part.label}</div>
-            <div className="whitespace-pre-wrap text-[12px] font-medium leading-5 text-[var(--text-muted)]">{part.content}</div>
-          </div>
-        ))}
-      </div>
-    </details>
+    <div className="assistant-flow">
+      {fastThinking.trim() ? <AssistantFlowBlock label="快路思考" tone="thinking" text={fastThinking} /> : null}
+      {fastReply ? <AssistantFlowBlock label="快路回复" tone="reply" text={fastReply} /> : null}
+      {slowThinking.trim() ? <AssistantFlowBlock label="慢路思考" tone="thinking" text={slowThinking} /> : null}
+      {slowReply ? <AssistantFlowBlock label="慢路回复" tone="reply" text={slowReply} /> : null}
+    </div>
+  );
+}
+
+function AssistantFlowBlock({ label, text, tone }: { label: string; text: string; tone: 'thinking' | 'reply' }) {
+  return (
+    <section className="assistant-flow-block" data-tone={tone}>
+      <div className="assistant-flow-label">{label}</div>
+      <div className="assistant-flow-text">{text}</div>
+    </section>
   );
 }
 
