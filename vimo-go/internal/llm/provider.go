@@ -21,14 +21,20 @@ type ChatRequest struct {
 	TopP           *float64        `json:"top_p,omitempty"`
 	MaxTokens      *int            `json:"max_tokens,omitempty"`
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
-	Stream         bool            `json:"stream"`
+	Thinking       *ThinkingOptions
+	Stream         bool `json:"stream"`
 }
 
 type ChatResponse struct {
-	Content string
-	Raw     []byte
+	Content   string
+	Reasoning string
+	Raw       []byte
 }
 
 type ResponseFormat struct {
 	Type string `json:"type"`
+}
+
+type ThinkingOptions struct {
+	Enabled bool `json:"enabled"`
 }

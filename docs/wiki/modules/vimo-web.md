@@ -6,27 +6,30 @@
 
 ## 主要组件
 
-- `ChatAgent`：管理消息流、发送输入、复制/重试消息、清空会话，以及右侧 Records API 记录面板。
-- `Composer`：底部输入框、发送按钮、四类快捷意图按钮和 disabled 语音占位按钮。
+- `ChatAgent`：管理 Codex-like 三栏工作台、消息流、发送输入、复制/重试消息、清空会话、设置页入口，以及右侧 Records API 记录预览面板。
+- `Composer`：底部输入框、内嵌模型选择菜单、思考模式开关、自定义模型弹窗、发送/停止生成按钮。
 - `RecordCard`：展示识别结果，支持编辑、保存、丢弃，使用 icon 优先的轻量确认面板。
-- `MobileShell`：页面安全区和桌面工作台容器，桌面最大宽度为 `1480px`。
+- `MobileShell`：页面安全区容器；当前主界面不再用外层最大宽度面板包住，桌面布局由 `ChatAgent` 内部 grid 控制。
 
 ## 当前记录行为
 
-- 主页面为 PC 优先的双栏布局：左侧是 Chat Agent，右侧是记录列表面板。
-- PC 会话区、用户消息气泡、AI 直排回复、输入区和记录确认卡使用紧凑尺寸，避免截图时单个组件占据过多画面。
+- 主页面为 Codex-like 三栏布局：左侧为窄侧边栏，中间是开放式聊天/设置视图，右侧是记录预览面板；顶部 Vimo 栏和 Chat Agent 子栏已移除。
+- 左侧侧边栏不展示会话列表，只保留搜索、定时任务入口和底部个人资料入口；点击个人资料会在中间区域进入设置页，右侧记录预览仍常驻。
+- 左侧“定时任务”入口会切换到右侧待办 tab 并进入定时任务 scope，仅展示带提醒或时间的待办；右侧 tab 或搜索会回到普通记录浏览。
+- PC 会话区、用户消息气泡、AI 直排回复、输入区和记录确认卡使用简洁克制的中高密度布局，输入框参考 Claude 风格，模型选择放在输入框内部。
 - 每条用户消息和 AI 消息下方显示本地发送日期时间，便于追溯会话。
 - 发送 Agent 消息时会为本轮生成 `turn_id`，先调用 `POST /api/agent/fast-reply/stream` 负责快路承接；前端收到 `fast_delta` 后立即更新同一条 AI 回复，并在视觉层逐字渲染。
 - 前端在快路首字返回或短超时后启动 `POST /api/agent/messages` 慢路执行，慢路请求会携带 `fast_reply_context`，内容是同一 `turn_id` 下已展示或已收到的快路承接文本；慢路结果不会打断快路文字渲染。
 - 快路 `fast_done.route=chat_only` 时，前端只保留快路闲聊回复，并中止或丢弃同轮慢路结果，不生成意图栈、记录卡或待确认项。
 - 快路文字输出期间，`ThinkingBubble` 以无头像、无气泡的“正在思考”文字展示，扫光只裁剪在文字字形内；`route=chat_only` 时快路完成后立即隐藏等待态，`route=continue_slow` 时慢路 `final` 事件返回并开始输出最终回复首字时才隐藏等待态。
+- 若当前模型声明 `supports_thinking=true` 且输入框内“思考”开关开启，前端会在快路和慢路请求中发送 `thinking.enabled=true`；只有 provider 实际返回 reasoning 时，AI 消息上方才展示可折叠“思考过程”，并按 `快路思考` / `慢路思考` 分段显示。
 - 慢路 `final` 事件返回后，前端用最终 `message.content` 校准同一条 AI 回复，再执行原有 `record_preview` 自动保存、候选卡和待确认逻辑。
-- 右侧面板通过 tab 切换 `全部`、`待办`、`想法`、`备忘`、`日记`、`确认`。
+- 右侧面板通过 tab 切换 `全部`、`待办`、`想法`、`备忘`、`日记`、`确认`、`回收`；`待办`、`想法`、`备忘`、`日记` 在对应 tab 内使用不同预览布局，通用 tab 仍使用统一记录行。
 - 记录通过 Records API 读写；后端可配置 MySQL 持久化，未配置时使用内存仓储。
 - 浏览器 `localStorage` 的 `vimo-web.records.v1` 只作为旧数据一次性导入来源和记录服务不可用时的本地兜底缓存。
 - 右侧记录正文展示后端 `record_preview.content`，该字段应是 AI 提炼后的沉淀内容，不是用户输入原文。
 - 右侧记录卡底部时间会把后端 RFC3339 时间归一为本地 `YYYY-MM-DD HH:mm:ss` 展示。
-- 支持手动新增、搜索、编辑、删除记录；`todo` 类型支持完成/恢复。
+- 记录只支持由模型交互生成；右侧面板保留搜索、编辑、删除/恢复，`todo` 类型支持完成/恢复，不再提供手动新增入口。
 - AI 返回 `ready` 且通过字段级风险矩阵时，前端会自动调用 Records API 保存或更新记录；低风险字段允许较低置信最佳猜测，高风险字段低置信会进入待确认。
 - 前端读取 `record_preview.field_confidence/field_risk` 判断 `datetime`、`need_reminder`、`target` 等高风险字段是否可静默执行；确认卡会展示低置信或高风险字段的轻量标记。
 - 自动执行不是只看整体置信度：`confidence` 至少 0.65，低风险字段阈值 0.45，高风险字段默认阈值 0.85；用户多次确认且很少修改后可降到 0.78，频繁修改会升到 0.92。
@@ -42,8 +45,8 @@
 - 只有需要补充或确认的信息会进入会话区域上方的弱提醒待补全条，默认不自动打开；顶部待确认区会按 `waiting_field`、`hard_stop_*`、`ready_to_execute` 和草稿候选分组展示；点击弱提醒或 AI 回复气泡下方的补全链接后，用小弹窗编辑、保存或丢弃。
 - 前端维护 `open_contexts` 未收口项池；`clarify`、待补全记录、待确认更新和顶部待确认候选都会进入下一轮 `open_contexts`，下一轮模糊/短回复由模型优先判断是否接续最近未收口项。
 - 对话消息、`open_contexts`、顶部待确认候选和当前打开的待确认 id 会分别持久化到 `localStorage` 的 `vimo-web.chat-messages.v1`、`vimo-web.open-contexts.v1`、`vimo-web.pending-previews.v1` 和 `vimo-web.active-pending-id.v1`，刷新页面后仍保留本地上下文；缓存恢复时会丢弃结构异常的 preview。
-- 通知分为两类：刷新、复制、设置、清空、手动新增/更新/删除/恢复等即时反馈使用顶部短暂 toast；AI 自动保存/更新/删除结果、待确认残留等处理状态可作为聊天区内联 `notice` 状态行展示并随会话持久化。`notice` 只用于本地 UI 反馈，不会进入模型 `recent_messages`。
-- 顶部待补全条中的每个上下文都有单独删除按钮，点击后会同时移除对应待确认候选、关闭同 id 的 `open_contexts`，并清理当前打开的待确认 id；右上角“清空聊天”会清空消息和所有本地未收口上下文。
+- 通知分为两类：复制、模型设置、清空、编辑/删除/恢复等即时反馈使用顶部短暂 toast；普通刷新成功不再提示。AI 自动保存/更新/删除结果、待确认残留等处理状态可作为聊天区内联 `notice` 状态行展示并随会话持久化。`notice` 只用于本地 UI 反馈，不会进入模型 `recent_messages`。
+- 顶部待补全条中的每个上下文都有单独删除按钮，点击后会同时移除对应待确认候选、关闭同 id 的 `open_contexts`，并清理当前打开的待确认 id；右上角“清空聊天”会先弹出二次确认，确认后清空消息和所有本地未收口上下文，不删除已保存记录。
 - `open_contexts` 会携带 `pending_state/context_state`，以及待执行任务的 `intent`、`record_action`、`target_id`、`related_ids`、`record_candidates` 和 `execution_plan`，让模型知道未收口项是在等字段、等确认还是等待执行哪个目标。
 - 用户确认上一轮待确认任务时，如果模型返回 `confirm_pending/update_pending` 并指向该 pending id，前端会复用上一条 pending preview 的结构化动作执行；删除类确认支持把已确认的多个 `related_ids` 一起软删除。
 - 用户补齐上一轮待确认任务的时间时，前端会把 `update_pending/confirm_pending` 的新字段合并进旧 pending preview；如果新时间只出现在主 `record_candidates[0]`，`normalizePreview` 也会同步回兼容字段，避免保存时丢失 `datetime_text/datetime_iso`。
@@ -53,14 +56,16 @@
 - 如果当前后端仍是旧进程且严格拒绝未知 `recent_messages` 字段，前端会自动移除该字段重试一次，避免页面直接报错；这种兼容重试只能保证可用性，不能提供新后端的闲聊连续性修复效果。
 - 用户继续回复时，前端不做关键词判断；是否接续未收口项、确认、修改或作为新记录完全由模型返回的 `intent/context_action` 决定。
 - 模型请求失败时前端只显示普通错误 UI，不再写入固定 assistant 话术。
-- 快捷类型按钮只作为 UI 入口，不再向输入框注入固定自然语言模板。
-- AI 回复偏好保存在 `localStorage`，key 为 `vimo-web.agent-settings.v1`，包含模型选择、回复预设、自定义风格和称呼；内置预设显示为 `INTJ`、`ENFJ`、`ISTP`、`ENFP` 和 `Custom`，旧 preset 会迁移到最接近的 MBTI-style 预设。
-- AI 设置面板从 `GET /api/agent/models` 读取模型列表，默认模型由后端配置决定；若本地设置仍是旧默认 `gpt_5_4_mini`，会迁移到新的后端默认；用户显式选择后，每次发送会带上对应 `model_key` 热切换。
-- AI 设置面板保持功能优先的紧凑样式：模型列表折叠为下拉选择，只展示当前模型说明；回复风格预设使用小型分段按钮。
+- 输入框上方不再展示快捷类型按钮；新增记录、分类、确认等入口只通过自然语言与模型交互触发。
+- AI 回复偏好保存在 `localStorage`，key 为 `vimo-web.agent-settings.v1`，包含模型选择、回复预设、自定义风格、称呼和 `thinking_enabled`；内置预设仍为 `INTJ`、`ENFJ`、`ISTP`、`ENFP` 和 `custom`，旧 preset 会迁移到最接近的 MBTI-style 预设。
+- 模型选择入口从独立 AI 设置面板移动到输入框内部；内置模型来自 `GET /api/agent/models`，默认模型由后端配置决定，用户显式选择后每次发送会带上对应 `model_key` 热切换。
+- 自定义模型保存在 `localStorage` 的 `vimo-web.custom-models.v1`，字段包含本地 key、显示名称、OpenAI-compatible API URL、API key、模型名称、超时时间和 `supports_thinking`；发送时只在当前请求中透传匹配的 `custom_model` 给后端。
+- 消息生成中时，输入框发送按钮切换为停止按钮；点击会 abort 当前快路/慢路请求并停止本地逐字渲染，保留已生成文本并恢复可输入状态。
 - Agent 返回 `intent=config_update` 和 `settings_patch` 时，前端更新全局 AI 设置并持久化到 `localStorage`，不展示记录确认卡、不写入沉淀记录；其中 `settings_patch.model_key` 必须命中 `GET /api/agent/models` 返回的模型 key，否则忽略。
 - AI 回复消息不显示头像或气泡；正文上方不再单独显示 `record_preview.intent`，只保留默认收起的意图栈入口，用于按需观察后端意图理解结果。
 - 右侧确认 tab 按 `status=need_confirmation` 统计和筛选，不再只依赖 `unknown` 类型。
 - 当前端收到 `record_preview.should_preview=false`、`intent=answer_query` 或 `intent=joke_response` 时，只展示 AI 回复，不展示记录确认卡。
+- 全局主题通过 CSS variables 和 `prefers-color-scheme` 跟随系统深色/浅色变化，主界面、输入框、弹窗、记录面板和消息控件使用同一套语义变量。
 
 ## 本地启动
 

@@ -25,6 +25,18 @@ export interface AgentModelOption {
   description: string;
   model: string;
   default: boolean;
+  supports_thinking?: boolean;
+}
+
+export interface CustomAgentModel {
+  key: AgentModelKey;
+  label: string;
+  description?: string;
+  api_url: string;
+  api_key: string;
+  model: string;
+  timeout_seconds?: number;
+  supports_thinking?: boolean;
 }
 
 export interface SettingsPatch {
@@ -181,6 +193,7 @@ export interface AgentMessageRequest {
   message: string;
   timezone: string;
   model_key?: AgentModelKey;
+  custom_model?: CustomAgentModel;
   pending_record?: AgentContextRecord;
   recent_records?: AgentContextRecord[];
   open_contexts?: AgentContextRecord[];
@@ -188,6 +201,7 @@ export interface AgentMessageRequest {
   recent_messages?: ConversationMessage[];
   reply_profile?: ReplyProfile;
   fast_reply_context?: FastReplyContext;
+  thinking?: ThinkingRequest;
 }
 
 export interface AgentMessageResponse {
@@ -196,10 +210,21 @@ export interface AgentMessageResponse {
     content: string;
   };
   record_preview: RecordPreview;
+  thinking?: ThinkingPayload | null;
+}
+
+export interface ThinkingRequest {
+  enabled: boolean;
+}
+
+export interface ThinkingPayload {
+  fast?: string;
+  slow?: string;
 }
 
 export type AgentStreamEvent =
   | { type: 'fast_delta'; delta: string }
+  | { type: 'fast_thinking'; content: string }
   | { type: 'fast_done'; route?: FastReplyRoute }
   | { type: 'fast_error'; message: string }
   | { type: 'final'; response: AgentMessageResponse }

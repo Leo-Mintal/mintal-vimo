@@ -11,14 +11,69 @@ body,
 #root {
   min-height: 100%;
   overscroll-behavior: none;
-  color-scheme: dark;
+  color-scheme: light dark;
+}
+
+:root {
+  --app-bg: #f5f2ed;
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-solid: #ffffff;
+  --surface-soft: rgba(20, 24, 31, 0.055);
+  --surface-hover: rgba(20, 24, 31, 0.09);
+  --surface-elevated: rgba(255, 255, 255, 0.92);
+  --border: rgba(22, 25, 32, 0.14);
+  --border-subtle: rgba(22, 25, 32, 0.1);
+  --text-strong: #181a20;
+  --text: #343842;
+  --text-muted: rgba(52, 56, 66, 0.64);
+  --text-faint: rgba(52, 56, 66, 0.42);
+  --accent: #0f766e;
+  --accent-strong: #0d5f59;
+  --accent-soft: rgba(15, 118, 110, 0.11);
+  --success: #15803d;
+  --success-soft: rgba(21, 128, 61, 0.12);
+  --danger: #c2414b;
+  --danger-soft: rgba(194, 65, 75, 0.12);
+  --warning: #9a6a12;
+  --warning-soft: rgba(154, 106, 18, 0.14);
+  --shadow-soft: 0 24px 70px rgba(31, 35, 43, 0.12);
+  --shadow-float: 0 22px 56px rgba(31, 35, 43, 0.18);
+  --composer-bg: rgba(255, 255, 255, 0.82);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --app-bg: #191919;
+    --surface: rgba(38, 38, 38, 0.68);
+    --surface-solid: #262626;
+    --surface-soft: rgba(255, 255, 255, 0.065);
+    --surface-hover: rgba(255, 255, 255, 0.1);
+    --surface-elevated: rgba(51, 51, 51, 0.94);
+    --border: rgba(255, 255, 255, 0.16);
+    --border-subtle: rgba(255, 255, 255, 0.1);
+    --text-strong: #f3f0ea;
+    --text: #ddd8cf;
+    --text-muted: rgba(221, 216, 207, 0.64);
+    --text-faint: rgba(221, 216, 207, 0.42);
+    --accent: #57c7b8;
+    --accent-strong: #76d8ca;
+    --accent-soft: rgba(87, 199, 184, 0.14);
+    --success: #70d894;
+    --success-soft: rgba(112, 216, 148, 0.16);
+    --danger: #ff8c98;
+    --danger-soft: rgba(255, 140, 152, 0.14);
+    --warning: #f1c263;
+    --warning-soft: rgba(241, 194, 99, 0.16);
+    --shadow-soft: 0 24px 70px rgba(0, 0, 0, 0.22);
+    --shadow-float: 0 22px 56px rgba(0, 0, 0, 0.34);
+    --composer-bg: rgba(45, 45, 45, 0.82);
+  }
 }
 
 body {
   margin: 0;
-  background:
-    linear-gradient(135deg, rgba(49, 29, 45, 0.98) 0%, rgba(17, 16, 24, 1) 38%, rgba(12, 31, 34, 0.98) 70%, rgba(27, 20, 38, 1) 100%);
-  color: #f8f4ed;
+  background: var(--app-bg);
+  color: var(--text-strong);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -32,7 +87,7 @@ select {
 }
 
 button:focus-visible {
-  outline: 2px solid #ff85a1;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -43,18 +98,563 @@ select:focus-visible {
 }
 
 ::selection {
-  background: rgba(255, 133, 161, 0.32);
-  color: #fffaf4;
+  background: var(--accent-soft);
+  color: var(--text-strong);
 }
 
 option {
-  background-color: #1a1824;
-  color: #f8f4ed;
+  background-color: var(--surface-solid);
+  color: var(--text-strong);
+}
+
+.app-surface {
+  background:
+    radial-gradient(circle at 18% 8%, rgba(15, 118, 110, 0.08), transparent 30%),
+    radial-gradient(circle at 82% 14%, rgba(154, 106, 18, 0.07), transparent 28%),
+    var(--app-bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  .app-surface {
+    background:
+      radial-gradient(circle at 18% 8%, rgba(87, 199, 184, 0.07), transparent 30%),
+      radial-gradient(circle at 82% 14%, rgba(241, 194, 99, 0.05), transparent 28%),
+      var(--app-bg);
+  }
+}
+
+.chat-surface {
+  color: var(--text-strong);
+}
+
+.vimo-workbench {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr) 380px;
+  color: var(--text-strong);
+}
+
+.vimo-left-sidebar {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: space-between;
+  border-right: 1px solid var(--border-subtle);
+  padding: 14px 12px;
+  background: rgba(255, 255, 255, 0.36);
+  backdrop-filter: blur(20px);
+}
+
+.vimo-center-pane {
+  overflow: hidden;
+}
+
+.vimo-brand-button,
+.vimo-sidebar-action,
+.vimo-profile-button {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  padding: 8px;
+  color: var(--text);
+  transition: background-color 180ms ease, color 180ms ease, transform 180ms ease;
+}
+
+.vimo-brand-button:hover,
+.vimo-sidebar-action:hover,
+.vimo-profile-button:hover,
+.vimo-profile-button[data-active='true'] {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.vimo-brand-mark {
+  display: grid;
+  height: 34px;
+  width: 34px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--text-strong);
+  color: var(--app-bg);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.vimo-sidebar-search {
+  display: flex;
+  height: 38px;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  padding: 0 10px;
+  color: var(--text-muted);
+}
+
+.records-panel {
+  border-left: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.34);
+  color: var(--text-strong);
+  backdrop-filter: blur(24px);
+}
+
+.settings-view {
+  color: var(--text-strong);
+}
+
+.settings-section {
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  background: var(--surface);
+  padding: 14px;
+  backdrop-filter: blur(18px);
+}
+
+.settings-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.settings-model-row,
+.settings-toggle-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  padding: 9px;
+  color: var(--text);
+  transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+
+.settings-model-row:hover,
+.settings-toggle-row:hover,
+.settings-model-row[data-active='true'],
+.settings-toggle-row[data-active='true'] {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border-subtle));
+  background: var(--surface-hover);
+}
+
+.settings-toggle-knob {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--surface-hover);
+}
+
+.settings-toggle-knob::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  content: '';
+  border-radius: 999px;
+  background: var(--text-muted);
+  transition: transform 180ms ease, background-color 180ms ease;
+}
+
+.settings-toggle-row[data-active='true'] .settings-toggle-knob {
+  background: var(--accent-soft);
+}
+
+.settings-toggle-row[data-active='true'] .settings-toggle-knob::after {
+  transform: translateX(16px);
+  background: var(--accent);
+}
+
+.record-preview-item {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: var(--surface-elevated);
+  padding: 10px;
+  box-shadow: 0 10px 30px rgba(31, 35, 43, 0.06);
+}
+
+.idea-preview {
+  display: block;
+  border-color: color-mix(in srgb, #d39a22 25%, var(--border-subtle));
+}
+
+.memo-preview {
+  border-style: dashed;
+}
+
+.journal-preview {
+  background: linear-gradient(180deg, var(--surface-elevated), var(--surface));
+}
+
+.record-check-button {
+  display: grid;
+  height: 28px;
+  width: 28px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--text-muted);
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+.record-check-button:hover,
+.record-check-button[data-active='true'] {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.record-mini-chip {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  padding: 3px 7px;
+}
+
+.record-tabs-strip {
+  scrollbar-width: none;
+}
+
+.record-tabs-strip::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .vimo-left-sidebar,
+  .records-panel {
+    background: rgba(28, 28, 28, 0.55);
+  }
+
+  .record-preview-item {
+    box-shadow: none;
+  }
+}
+
+@media (max-width: 1100px) {
+  .vimo-workbench {
+    grid-template-columns: 220px minmax(0, 1fr);
+    overflow-y: auto;
+  }
+
+  .records-panel {
+    grid-column: 1 / -1;
+    min-height: 360px;
+    border-left: 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+}
+
+@media (max-width: 760px) {
+  .vimo-workbench {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .vimo-left-sidebar {
+    min-height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
+    gap: 10px;
+  }
+
+  .vimo-sidebar-top {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .vimo-profile-button {
+    margin-top: 2px;
+  }
+
+  .vimo-center-pane {
+    min-height: 560px;
+  }
+
+  .records-panel {
+    min-height: 420px;
+  }
+}
+
+.composer-shell {
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--composer-bg);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(24px);
+}
+
+.model-chip,
+.send-button,
+.icon-button,
+.primary-button,
+.secondary-button,
+.danger-button,
+.thinking-toggle,
+.model-menu-action {
+  border: 0;
+  transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease, transform 180ms ease, opacity 180ms ease;
+}
+
+.model-chip {
+  display: inline-flex;
+  height: 36px;
+  max-width: min(58vw, 240px);
+  align-items: center;
+  gap: 6px;
+  border-radius: 12px;
+  background: var(--surface-soft);
+  padding: 0 10px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.model-chip:hover,
+.icon-button:hover,
+.secondary-button:hover,
+.thinking-toggle:hover,
+.model-menu-action:hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.send-button {
+  display: grid;
+  height: 38px;
+  width: 38px;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--text-strong);
+  color: var(--app-bg);
+  box-shadow: 0 12px 26px rgba(20, 24, 31, 0.16);
+}
+
+.send-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: var(--accent-strong);
+  color: #fff;
+}
+
+.send-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+  box-shadow: none;
+}
+
+.send-button.is-stopping {
+  background: var(--danger-soft);
+  color: var(--danger);
+  box-shadow: none;
+}
+
+.thinking-toggle {
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  gap: 6px;
+  border-radius: 12px;
+  background: var(--surface-soft);
+  padding: 0 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.thinking-toggle[data-active='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.model-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 35;
+  width: min(320px, calc(100vw - 40px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(24px);
+}
+
+.model-menu-item {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  border-radius: 10px;
+  padding: 8px;
+  color: var(--text);
+}
+
+.model-menu-item:hover {
+  background: var(--surface-soft);
+}
+
+.model-menu-action {
+  display: flex;
+  height: 36px;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  padding: 0 10px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.28);
+  padding: 24px 16px;
+  backdrop-filter: blur(12px);
+}
+
+.custom-model-modal {
+  width: min(460px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface-elevated);
+  padding: 16px;
+  color: var(--text-strong);
+  box-shadow: var(--shadow-float);
+}
+
+.confirm-modal {
+  width: min(420px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface-elevated);
+  padding: 16px;
+  color: var(--text-strong);
+  box-shadow: var(--shadow-float);
+}
+
+.text-field {
+  height: 40px;
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  padding: 0 12px;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.text-field::placeholder {
+  color: var(--text-faint);
+}
+
+.icon-button {
+  display: grid;
+  height: 34px;
+  width: 34px;
+  place-items: center;
+  border-radius: 11px;
+  color: var(--text-muted);
+}
+
+.primary-button,
+.secondary-button,
+.danger-button {
+  display: inline-flex;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 12px;
+  padding: 0 13px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.primary-button {
+  background: var(--text-strong);
+  color: var(--app-bg);
+}
+
+.secondary-button {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.danger-button {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.danger-button:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+.thinking-panel {
+  width: min(100%, 620px);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.thinking-panel > summary {
+  display: flex;
+  min-height: 34px;
+  cursor: pointer;
+  list-style: none;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.thinking-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking-panel > summary:hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
 }
 
 .vimo-thinking-sign {
   display: inline-block;
-  color: rgba(216, 200, 184, 0.46);
+  color: var(--text-faint);
   font-size: 13px;
   font-weight: 600;
   line-height: 20px;
@@ -65,12 +665,12 @@ option {
   .vimo-thinking-sign {
     background-image: linear-gradient(
       100deg,
-      rgba(216, 200, 184, 0.42) 0%,
-      rgba(216, 200, 184, 0.42) 36%,
-      rgba(248, 244, 237, 0.92) 48%,
-      rgba(216, 200, 184, 0.58) 58%,
-      rgba(216, 200, 184, 0.42) 72%,
-      rgba(216, 200, 184, 0.42) 100%
+      var(--text-faint) 0%,
+      var(--text-faint) 36%,
+      var(--text-strong) 48%,
+      var(--text-muted) 58%,
+      var(--text-faint) 72%,
+      var(--text-faint) 100%
     );
     background-position: 100% 50%;
     background-size: 260% 100%;
@@ -106,6 +706,6 @@ option {
 
   .vimo-thinking-sign {
     background-image: none;
-    -webkit-text-fill-color: rgba(216, 200, 184, 0.46);
+    -webkit-text-fill-color: var(--text-faint);
   }
 }

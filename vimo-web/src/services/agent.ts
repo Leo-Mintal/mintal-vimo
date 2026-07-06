@@ -190,6 +190,8 @@ function parseSSEEvent(raw: string): AgentStreamEvent | null {
   switch (eventName) {
     case 'fast_delta':
       return { type: 'fast_delta', delta: typeof data.delta === 'string' ? data.delta : '' };
+    case 'fast_thinking':
+      return { type: 'fast_thinking', content: typeof data.content === 'string' ? data.content : '' };
     case 'fast_done':
       return {
         type: 'fast_done',

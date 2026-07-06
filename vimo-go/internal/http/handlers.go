@@ -59,6 +59,7 @@ func (h *Handler) AgentMessage(w http.ResponseWriter, r *http.Request) {
 			"content": result.Reply,
 		},
 		"record_preview": result,
+		"thinking":       thinkingPayload("", result.Reasoning),
 	})
 }
 
@@ -95,6 +96,9 @@ func (h *Handler) AgentFastReplyStream(w http.ResponseWriter, r *http.Request) {
 	route := agent.FastReplyRouteContinueSlow
 	if result != nil {
 		route = result.Route
+		if strings.TrimSpace(result.Reasoning) != "" {
+			_ = writeSSE(w, flusher, "fast_thinking", map[string]string{"content": result.Reasoning})
+		}
 	}
 	_ = writeSSE(w, flusher, "fast_done", map[string]any{"ok": true, "route": route})
 }
@@ -150,6 +154,11 @@ func (h *Handler) AgentMessageStream(w http.ResponseWriter, r *http.Request) {
 	fastRoute := agent.FastReplyRouteContinueSlow
 	if fastResult != nil {
 		fastRoute = fastResult.Route
+		if strings.TrimSpace(fastResult.Reasoning) != "" {
+			if err := writeEvent("fast_thinking", map[string]string{"content": fastResult.Reasoning}); err != nil {
+				return
+			}
+		}
 	}
 	if err := writeEvent("fast_done", map[string]any{"ok": true, "route": fastRoute}); err != nil {
 		return
@@ -172,6 +181,7 @@ func (h *Handler) AgentMessageStream(w http.ResponseWriter, r *http.Request) {
 			"content": slow.result.Reply,
 		},
 		"record_preview": slow.result,
+		"thinking":       thinkingPayload("", slow.result.Reasoning),
 	}); err != nil {
 		return
 	}
@@ -301,6 +311,20 @@ func publicErrorMessage(status int) string {
 	default:
 		return http.StatusText(status)
 	}
+}
+
+func thinkingPayload(fast string, slow string) map[string]string {
+	payload := map[string]string{}
+	if fast = strings.TrimSpace(fast); fast != "" {
+		payload["fast"] = fast
+	}
+	if slow = strings.TrimSpace(slow); slow != "" {
+		payload["slow"] = slow
+	}
+	if len(payload) == 0 {
+		return nil
+	}
+	return payload
 }
 
 func writeSSE(w io.Writer, flusher http.Flusher, event string, value any) error {

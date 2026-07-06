@@ -12,6 +12,7 @@ Mintal Vimo / 微默是一个极简 AI 记录 Demo。当前阶段验证文本输
 - 后端模块说明：`docs/wiki/modules/vimo-go.md`
 - 前端模块说明：`docs/wiki/modules/vimo-web.md`
 - Agent 实时反馈链路改造方案：`docs/wiki/realtime-agent-feedback-plan.md`
+- Runtime Skills 自主选择与安全启用方案：`docs/wiki/runtime-skills-autonomy-plan.md`
 
 ## 架构说明入口
 
@@ -28,13 +29,17 @@ Mintal Vimo / 微默是一个极简 AI 记录 Demo。当前阶段验证文本输
 
 ## 最近更新记录
 
+- 2026-07-06：`vimo-web` 主页面改为 Codex-like 三栏工作台：左侧只保留搜索、定时任务和个人资料入口，个人资料进入中间设置页，右侧记录面板按 tab 做分类型预览。
+- 2026-07-06：补齐模型思考模式链路：模型配置和自定义模型可声明 `supports_thinking`，输入框按能力显示思考开关，快路/慢路请求会透传 `thinking.enabled` 并展示 provider 返回的 reasoning；刷新成功不再 toast，清空聊天改为二次确认。
+- 2026-07-06：新增 `docs/wiki/runtime-skills-autonomy-plan.md`，沉淀未来让 Agent 通过结构化 `skill_request` 请求 runtime skills、由后端 registry 和 Safety Gate 安全启用的方案；当前未改运行时代码，正式实现前需同步 PRD。
+- 2026-07-06：重构 `vimo-web` 主聊天界面为开放式 Claude-like 输入体验：模型选择移入输入框，自定义模型缓存到 localStorage，生成中可停止，记录不再支持手动新增，主题跟随系统深浅色。
 - 2026-07-04：公开仓库上传前将示例模型地址和 Qwen fallback 默认地址改为公开安全占位/本机地址，避免提交内部服务域名或内网 IP。
 - 2026-07-04：Go 模块要求提升到 `go 1.25.11`，用于避开 `govulncheck` 报出的 Go 标准库已修复漏洞；本地旧工具链如需自动下载需启用 Go checksum database。
 - 2026-07-04：按当前需求彻底移除独立 model-test / 在线 eval 流程，删除 `vimo-go/cmd/eval`、`vimo-go/internal/agent/eval.go` 和 `vimo-go/internal/agent/evalcases/`，主流程仅保留服务、prompt 和单元测试链路。
 - 2026-07-04：`vimo-web` AI 回复设置面板改为紧凑样式，模型列表折叠为下拉选择，风格预设压缩为小型分段按钮，减少弹窗高度。
 - 2026-07-04：移除独立模型调试链路：删除对应后端接口、静态页面、agent 调试代码、环境开关和相关使用说明。
 - 2026-07-04：完成上传前安全加固：本地真实配置和生成产物补齐 ignore，后端默认仅监听本机、CORS 白名单、外部可达需 API token，前端限制 `closed_contexts` 最多 30 条并校验模型设置 key。
-- 2026-07-03：`vimo-web` 通知改为双通道：刷新、复制、设置、手动记录操作等即时反馈继续使用顶部短暂 toast；AI/记录处理结果可作为聊天区内联 `notice` 状态行展示，且不进入模型 `recent_messages`。
+- 2026-07-03：`vimo-web` 通知改为双通道：复制、设置、手动记录操作等即时反馈继续使用顶部短暂 toast；AI/记录处理结果可作为聊天区内联 `notice` 状态行展示，且不进入模型 `recent_messages`。当前普通刷新成功不提示。
 - 2026-07-03：快路/慢路 prompt 增加重复闲聊连续性规则；当 `recent_messages` 显示用户重复或高度近似地问同一问题时，模型应自然承认已经答过并保持同一立场，而不是每次重新包装成标准答案。
 - 2026-07-03：AI 回复风格预设改为 MBTI-style 英文枚举 `INTJ|ENFJ|ISTP|ENFP|custom`；前端设置面板、快路/慢路 prompt 和 `settings_patch.preset` schema 同步更新，旧 preset 会迁移到最接近的人格风格。
 - 2026-07-03：Agent 请求新增 `recent_messages` 最近可见聊天上下文，快路和慢路都可用它理解短追问和上一句闲聊，避免普通聊天被未收口日记/待确认项强行吸走。

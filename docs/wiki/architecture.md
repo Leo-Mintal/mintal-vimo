@@ -21,6 +21,7 @@ Phase 1 实现文本版 Chat Agent Demo：
 - `vimo-go/internal/config`：负责环境变量和模型配置加载。
 - `vimo-go/prompts`：集中维护模型提示词，代码启动时读取并组合。
 - `vimo-go/prompts/skills`：维护 Vimo 运行时 AI skills；`always/` 下的 Markdown 会加载到每次 Agent 模型调用中，当前用于统一聊天回复和可沉淀 `title/content` 的人话化约束。
+- Runtime Skills 自主选择方案见 `docs/wiki/runtime-skills-autonomy-plan.md`。未来如果 Agent 需要未加载 skill，只能输出结构化 `skill_request`，由后端 Skill Registry 和 Safety Gate 决定是否注入或拒绝；模型不能自行下载、安装或执行 skill。
 - `vimo-web/src/components`：负责移动端 Chat UI、记录卡片和页面骨架。
 - `vimo-web/src/services`：负责调用后端 API。
 

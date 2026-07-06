@@ -1,19 +1,20 @@
 import {
+  ArrowLeft,
   Bell,
   BookOpenText,
+  CalendarCheck2,
   CalendarClock,
   ChevronDown,
-  Check,
   CheckCircle2,
   ClipboardList,
   Clock3,
+  Brain,
   FileWarning,
   Edit3,
   FileText,
   Info,
   Lightbulb,
   ListChecks,
-  Plus,
   RefreshCw,
   Save,
   Search,
@@ -22,6 +23,7 @@ import {
   StickyNote,
   Trash2,
   Undo2,
+  UserRound,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -32,7 +34,7 @@ import { Composer } from './Composer';
 import { RecordCard } from '../RecordCard/RecordCard';
 import { listAgentModels, sendAgentFastReplyStream, sendAgentMessage } from '../../services/agent';
 import { createRecord, listRecords, saveRecord, updateRecord, type RecordWriteInput } from '../../services/records';
-import type { AgentContextRecord, AgentIntent, AgentModelOption, ConversationMessage, FieldRiskLevel, IntentItem, IntentTrace, PendingState, RecordAction, RecordCandidate, RecordPreview, RecordStatus, RecordType, ReplyPreset, ReplyProfile, RiskField, SettingsPatch } from '../../types/agent';
+import type { AgentContextRecord, AgentIntent, AgentModelOption, ConversationMessage, CustomAgentModel, FieldRiskLevel, IntentItem, IntentTrace, PendingState, RecordAction, RecordCandidate, RecordPreview, RecordStatus, RecordType, ReplyPreset, ReplyProfile, RiskField, SettingsPatch, ThinkingPayload } from '../../types/agent';
 import type { RecordItem } from '../../types/record';
 
 interface Message {
@@ -43,6 +45,7 @@ interface Message {
   intent?: AgentIntent;
   pendingId?: string;
   preview?: RecordPreview;
+  thinking?: ThinkingPayload | null;
 }
 
 interface PendingPreviewItem {
@@ -63,6 +66,8 @@ interface OpenContextItem {
 type AppliedAction = 'created' | 'updated' | 'deleted' | 'restored' | 'none';
 
 type RecordTab = 'all' | RecordType | 'pending' | 'trash';
+type ShellView = 'chat' | 'settings';
+type RecordScope = 'default' | 'scheduled';
 
 interface RecordDraft {
   type: RecordType;
@@ -76,6 +81,7 @@ interface RecordDraft {
 const storageKey = 'vimo-web.records.v1';
 const migrationKey = 'vimo-web.records-api-migrated.v1';
 const settingsKey = 'vimo-web.agent-settings.v1';
+const customModelsKey = 'vimo-web.custom-models.v1';
 const riskFeedbackKey = 'vimo-web.risk-feedback.v1';
 const chatMessagesKey = 'vimo-web.chat-messages.v1';
 const openContextsKey = 'vimo-web.open-contexts.v1';
@@ -85,22 +91,17 @@ const fastReplyStartTimeoutMs = 600;
 const previousDefaultModelKey = 'gpt_5_4_mini';
 const maxClosedContexts = 30;
 
-interface AgentSettings extends ReplyProfile {}
+interface AgentSettings extends ReplyProfile {
+  thinking_enabled: boolean;
+}
 
 const defaultSettings: AgentSettings = {
   preset: 'INTJ',
   custom_style: '',
   nickname: '',
   model_key: '',
+  thinking_enabled: false,
 };
-
-const presetOptions: Array<{ value: ReplyPreset; label: string; description: string }> = [
-  { value: 'INTJ', label: 'INTJ', description: 'Patterns, long-range framing, high standards' },
-  { value: 'ENFJ', label: 'ENFJ', description: 'Empathetic, responsive, people-aware' },
-  { value: 'ISTP', label: 'ISTP', description: 'Workable solutions, efficient, practical' },
-  { value: 'ENFP', label: 'ENFP', description: 'Imaginative, possibility-driven, supportive' },
-  { value: 'custom', label: 'Custom', description: 'Use the custom style below' },
-];
 
 const typeLabel: Record<RecordType, string> = {
   todo: '待办',
@@ -114,32 +115,32 @@ const typeMeta = {
   todo: {
     label: '待办',
     icon: ClipboardList,
-    tone: 'bg-[#14342a] text-[#7ee0a0]',
-    tab: 'data-[active=true]:bg-[#14342a] data-[active=true]:text-[#7ee0a0]',
+    tone: 'bg-[var(--success-soft)] text-[var(--success)]',
+    tab: 'data-[active=true]:bg-[var(--success-soft)] data-[active=true]:text-[var(--success)]',
   },
   idea: {
     label: '想法',
     icon: Lightbulb,
-    tone: 'bg-[#292242] text-[#c8b6ff]',
-    tab: 'data-[active=true]:bg-[#292242] data-[active=true]:text-[#c8b6ff]',
+    tone: 'bg-[#fff1b8] text-[#8a5a00] dark:bg-[#3d3213] dark:text-[#f5cd65]',
+    tab: 'data-[active=true]:bg-[#fff1b8] data-[active=true]:text-[#8a5a00] dark:data-[active=true]:bg-[#3d3213] dark:data-[active=true]:text-[#f5cd65]',
   },
   memo: {
     label: '备忘',
     icon: StickyNote,
-    tone: 'bg-[#3a202d] text-[#ff85a1]',
-    tab: 'data-[active=true]:bg-[#3a202d] data-[active=true]:text-[#ff85a1]',
+    tone: 'bg-[#eaf1ff] text-[#2f5f9f] dark:bg-[#1d2b40] dark:text-[#9fc3ff]',
+    tab: 'data-[active=true]:bg-[#eaf1ff] data-[active=true]:text-[#2f5f9f] dark:data-[active=true]:bg-[#1d2b40] dark:data-[active=true]:text-[#9fc3ff]',
   },
   journal: {
     label: '日记',
     icon: BookOpenText,
-    tone: 'bg-[#123040] text-[#8bd8ff]',
-    tab: 'data-[active=true]:bg-[#123040] data-[active=true]:text-[#8bd8ff]',
+    tone: 'bg-[#f3e8ff] text-[#7e3faa] dark:bg-[#30213d] dark:text-[#d8b4fe]',
+    tab: 'data-[active=true]:bg-[#f3e8ff] data-[active=true]:text-[#7e3faa] dark:data-[active=true]:bg-[#30213d] dark:data-[active=true]:text-[#d8b4fe]',
   },
   unknown: {
     label: '确认',
     icon: Sparkles,
-    tone: 'bg-[#70521f] text-[#f8f4ed]',
-    tab: 'data-[active=true]:bg-[#70521f] data-[active=true]:text-[#f8f4ed]',
+    tone: 'bg-[var(--warning-soft)] text-[var(--warning)]',
+    tab: 'data-[active=true]:bg-[var(--warning-soft)] data-[active=true]:text-[var(--warning)]',
   },
 } satisfies Record<RecordType, { label: string; icon: LucideIcon; tone: string; tab: string }>;
 
@@ -160,24 +161,28 @@ export function ChatAgent() {
   const [openContexts, setOpenContexts] = useState<OpenContextItem[]>(() => readStoredOpenContexts());
   const [activePendingId, setActivePendingId] = useState<string | null>(() => readStoredActivePendingId());
   const [settings, setSettings] = useState<AgentSettings>(() => readAgentSettings());
+  const [customModels, setCustomModels] = useState<CustomAgentModel[]>(() => readCustomModels());
   const [riskFeedback, setRiskFeedback] = useState<RiskFeedbackState>(() => readRiskFeedback());
   const [modelOptions, setModelOptions] = useState<AgentModelOption[]>([]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [shellView, setShellView] = useState<ShellView>('chat');
+  const [activeRecordTab, setActiveRecordTab] = useState<RecordTab>('all');
+  const [recordQuery, setRecordQuery] = useState('');
+  const [recordScope, setRecordScope] = useState<RecordScope>('default');
   const lastPromptRef = useRef<string>('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const messagesRef = useRef<Message[]>([]);
+  const activeAbortRef = useRef<AbortController | null>(null);
+  const generationTokenRef = useRef(0);
 
-  const activeRecords = useMemo(() => records.filter((record) => record.status !== 'discarded'), [records]);
-  const savedCount = activeRecords.length;
-  const todoCount = useMemo(() => activeRecords.filter((record) => record.type === 'todo' && record.status !== 'completed').length, [activeRecords]);
-  const completedCount = useMemo(() => activeRecords.filter((record) => record.status === 'completed').length, [activeRecords]);
   const latestPending = pendingPreviews[0] ?? null;
   const latestOpenContext = openContexts[0] ?? null;
   const activePending = pendingPreviews.find((item) => item.id === activePendingId) ?? null;
+  const scheduledCount = useMemo(() => records.filter(isScheduledTodo).length, [records]);
 
   useEffect(() => {
     void loadRecords();
@@ -245,9 +250,6 @@ export function ChatAgent() {
       setRecords(normalized);
       writeStoredRecords(normalized);
       markStoredRecordsMigrated();
-      if (!options.silent) {
-        showToast('已刷新');
-      }
       return normalized;
     } catch (err) {
       const fallback = readStoredRecords();
@@ -301,12 +303,6 @@ export function ChatAgent() {
     }
   }
 
-  function commitSettings(next: AgentSettings) {
-    setSettings(next);
-    writeAgentSettings(next);
-    showToast('偏好已更新');
-  }
-
   function mutateMessages(updater: (current: Message[]) => Message[]) {
     const next = updater(messagesRef.current);
     messagesRef.current = next;
@@ -336,6 +332,11 @@ export function ChatAgent() {
 
   async function handleSend(content: string) {
     lastPromptRef.current = content;
+    const generationToken = generationTokenRef.current + 1;
+    generationTokenRef.current = generationToken;
+    const requestController = new AbortController();
+    activeAbortRef.current?.abort();
+    activeAbortRef.current = requestController;
     const recentMessages = recentConversationMessages(messagesRef.current);
     const userMessage: Message = {
       id: createId(),
@@ -363,6 +364,8 @@ export function ChatAgent() {
         message: content,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai',
         model_key: selectedModelKey(settings),
+        custom_model: customModelForRequest(settings, customModels),
+        thinking: thinkingRequestForSettings(settings, modelOptions, customModels),
         open_contexts: buildOpenContextPayload(openContexts, pendingPreviews),
         closed_contexts: buildClosedContextPayload(records),
         recent_messages: recentMessages,
@@ -383,6 +386,9 @@ export function ChatAgent() {
         resolveFastFinished = resolve;
       });
       const fastTask = sendAgentFastReplyStream(request, async (event) => {
+        if (requestController.signal.aborted || generationTokenRef.current !== generationToken) {
+          return;
+        }
         if (event.type === 'fast_delta') {
           fastReplyText += event.delta;
           fastReplyState = 'partial';
@@ -391,9 +397,12 @@ export function ChatAgent() {
           if (acceptingFastDeltas) {
             const delta = event.delta;
             fastTypingTask = fastTypingTask.then(async () => {
-              await typeAssistantDelta(assistantId, delta);
+              await typeAssistantDelta(assistantId, delta, generationToken);
             });
           }
+        }
+        if (event.type === 'fast_thinking') {
+          mergeAssistantThinking(assistantId, { fast: event.content });
         }
         if (event.type === 'fast_done' || event.type === 'fast_error') {
           if (event.type === 'fast_error') {
@@ -408,7 +417,14 @@ export function ChatAgent() {
           resolveFastFinished?.();
           resolveFastFinished = undefined;
         }
-      }).catch(() => {
+      }, requestController.signal).catch((error: unknown) => {
+        if (isAbortError(error)) {
+          resolveFastStart?.();
+          resolveFastStart = undefined;
+          resolveFastFinished?.();
+          resolveFastFinished = undefined;
+          return;
+        }
         fastReplyHadError = true;
         fastReplyState = fastReplyText.trim() ? 'partial' : 'failed';
         resolveFastStart?.();
@@ -421,7 +437,6 @@ export function ChatAgent() {
       resolveFastStart?.();
       resolveFastStart = undefined;
       const fastContextText = fastReplyText.trim();
-      const slowController = new AbortController();
       const slowRequest = {
         ...request,
         fast_reply_context: {
@@ -430,13 +445,13 @@ export function ChatAgent() {
           content: fastContextText,
         },
       };
-      const slowTask = sendAgentMessage(slowRequest, slowController.signal)
+      const slowTask = sendAgentMessage(slowRequest, requestController.signal)
         .then((response) => ({ response, error: null }))
         .catch((error: unknown) => ({ response: null, error }));
       await fastFinished;
       const isChatOnly = fastReplyResult.route === 'chat_only' && !fastReplyHadError;
       if (isChatOnly) {
-        slowController.abort();
+        requestController.abort();
         void slowTask;
         acceptingFastDeltas = false;
         setThinking(false);
@@ -446,7 +461,13 @@ export function ChatAgent() {
       }
       const slowOutcome = await slowTask;
       if (slowOutcome.error) {
+        if (isAbortError(slowOutcome.error)) {
+          return;
+        }
         throw slowOutcome.error;
+      }
+      if (requestController.signal.aborted || generationTokenRef.current !== generationToken) {
+        return;
       }
       const response = slowOutcome.response;
       if (!response) {
@@ -456,7 +477,8 @@ export function ChatAgent() {
       acceptingFastDeltas = false;
       await fastTypingTask;
       setThinking(false);
-      await streamAssistantFinalText(assistantId, response.message.content);
+      mergeAssistantThinking(assistantId, response.thinking ?? null);
+      await streamAssistantFinalText(assistantId, response.message.content, generationToken);
       const pendingId = await applyAgentPreview(responsePreview, latestOpenContext?.id ?? latestPending?.id ?? null, content, response.message.content);
       updateAssistantMessage(assistantId, {
         intent: responsePreview.intent,
@@ -468,12 +490,27 @@ export function ChatAgent() {
       }
       await fastTask;
     } catch (err) {
+      if (isAbortError(err)) {
+        return;
+      }
       mutateMessages((current) => current.filter((message) => message.id !== assistantId || message.content.trim()));
       setError(err instanceof Error ? err.message : '请求失败');
     } finally {
-      setThinking(false);
-      setLoading(false);
+      if (generationTokenRef.current === generationToken) {
+        activeAbortRef.current = null;
+        setThinking(false);
+        setLoading(false);
+      }
     }
+  }
+
+  function stopGeneration() {
+    generationTokenRef.current += 1;
+    activeAbortRef.current?.abort();
+    activeAbortRef.current = null;
+    setThinking(false);
+    setLoading(false);
+    setError(null);
   }
 
   function appendAssistantDelta(messageId: string, delta: string) {
@@ -487,7 +524,30 @@ export function ChatAgent() {
     mutateMessages((current) => current.map((message) => (message.id === messageId ? { ...message, ...patch } : message)));
   }
 
-  async function streamAssistantFinalText(messageId: string, finalText: string) {
+  function mergeAssistantThinking(messageId: string, patch?: ThinkingPayload | null) {
+    const fast = patch?.fast?.trim();
+    const slow = patch?.slow?.trim();
+    if (!fast && !slow) {
+      return;
+    }
+    mutateMessages((current) =>
+      current.map((message) => {
+        if (message.id !== messageId) {
+          return message;
+        }
+        return {
+          ...message,
+          thinking: {
+            ...(message.thinking ?? {}),
+            ...(fast ? { fast } : {}),
+            ...(slow ? { slow } : {}),
+          },
+        };
+      }),
+    );
+  }
+
+  async function streamAssistantFinalText(messageId: string, finalText: string, generationToken: number) {
     const text = finalText.trim();
     if (!text) {
       return;
@@ -497,14 +557,14 @@ export function ChatAgent() {
       return;
     }
     if (current.trim() && text.startsWith(current.trim())) {
-      await typeAssistantDelta(messageId, text.slice(current.trim().length));
+      await typeAssistantDelta(messageId, text.slice(current.trim().length), generationToken);
       return;
     }
     if (current.trim()) {
-      await typeAssistantDelta(messageId, `\n\n${text}`);
+      await typeAssistantDelta(messageId, `\n\n${text}`, generationToken);
       return;
     }
-    await typeAssistantDelta(messageId, text);
+    await typeAssistantDelta(messageId, text, generationToken);
   }
 
   function messageContentById(messageId: string) {
@@ -512,8 +572,11 @@ export function ChatAgent() {
     return message?.content ?? '';
   }
 
-  async function typeAssistantDelta(messageId: string, text: string) {
+  async function typeAssistantDelta(messageId: string, text: string, generationToken: number) {
     for (const char of Array.from(text)) {
+      if (generationTokenRef.current !== generationToken || activeAbortRef.current?.signal.aborted) {
+        return;
+      }
       appendAssistantDelta(messageId, char);
       await sleep(12);
     }
@@ -749,7 +812,7 @@ export function ChatAgent() {
     if (!patch) {
       return;
     }
-    const safePatch = sanitizeSettingsPatch(patch, modelOptions);
+    const safePatch = sanitizeSettingsPatch(patch, modelOptions, customModels);
     if (!safePatch) {
       addNotice('偏好未更新');
       return;
@@ -762,12 +825,6 @@ export function ChatAgent() {
       writeAgentSettings(next);
       return next;
     });
-  }
-
-  async function handleCreateRecord(draft: RecordDraft) {
-    const record = await createRecord(recordInputFromDraft(draft));
-    upsertLocalRecord(normalizeRecordItem(record));
-    showToast('已新增');
   }
 
   async function handleUpdateRecord(id: string, draft: RecordDraft) {
@@ -790,6 +847,7 @@ export function ChatAgent() {
     setActivePendingId(null);
     setError(null);
     setThinking(false);
+    setClearConfirmOpen(false);
     showToast('已清空');
   }
 
@@ -807,6 +865,54 @@ export function ChatAgent() {
       return;
     }
     handleSend(message);
+  }
+
+  function selectModel(modelKey: string) {
+    const next = normalizeAgentSettings({
+      ...settings,
+      model_key: modelKey,
+      thinking_enabled: modelSupportsThinking(modelKey, modelOptions, customModels) ? settings.thinking_enabled : false,
+    });
+    setSettings(next);
+    writeAgentSettings(next);
+  }
+
+  function toggleThinkingMode(enabled: boolean) {
+    const next = normalizeAgentSettings({ ...settings, thinking_enabled: enabled });
+    setSettings(next);
+    writeAgentSettings(next);
+  }
+
+  function addCustomModel(model: CustomAgentModel) {
+    const nextModels = [model, ...customModels.filter((item) => item.key !== model.key)];
+    setCustomModels(nextModels);
+    writeCustomModels(nextModels);
+    selectModel(model.key);
+    showToast('模型已保存');
+  }
+
+  function deleteCustomModel(modelKey: string) {
+    const nextModels = customModels.filter((model) => model.key !== modelKey);
+    setCustomModels(nextModels);
+    writeCustomModels(nextModels);
+    if (settings.model_key === modelKey) {
+      const fallback = modelOptions.find((model) => model.default) ?? modelOptions[0] ?? nextModels[0];
+      selectModel(fallback?.key ?? '');
+    }
+    showToast('模型已删除');
+  }
+
+  function updateProfileSettings(patch: Partial<Pick<AgentSettings, 'preset' | 'custom_style' | 'nickname'>>) {
+    const next = normalizeAgentSettings({ ...settings, ...patch });
+    setSettings(next);
+    writeAgentSettings(next);
+  }
+
+  function openScheduledTasks() {
+    setShellView('chat');
+    setActiveRecordTab('todo');
+    setRecordScope('scheduled');
+    setRecordQuery('');
   }
 
   async function handleDeleteRecord(id: string) {
@@ -830,106 +936,123 @@ export function ChatAgent() {
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[linear-gradient(155deg,#120f18_0%,#171321_34%,#102024_68%,#1b1426_100%)]">
-      <header className="relative z-10 border-b border-[#353044] bg-[#111018]/95 px-4 py-2.5 text-[#f8f4ed] backdrop-blur-xl">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <div className="grid h-9 w-9 place-items-center rounded-[16px] bg-gradient-to-br from-[#b85d70] via-[#70521f] to-[#14342a] text-[#f8f4ed] shadow-pop">
-              <Sparkles size={16} />
-            </div>
-            <div>
-              <div className="text-base font-semibold leading-5 tracking-normal">Vimo</div>
-              <div className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-[#d8c8b8]/70">
-                <span className="h-1.5 w-1.5 rounded-full bg-leaf shadow-[0_0_0_3px_rgba(126,224,160,0.22)]" />
-                {loading ? 'thinking' : 'ready'}
+    <div className="app-surface vimo-workbench relative h-full min-h-0 overflow-hidden">
+      <LeftSidebar
+        activeView={shellView}
+        onOpenSettings={() => setShellView('settings')}
+        onOpenChat={() => setShellView('chat')}
+        onOpenScheduled={openScheduledTasks}
+        onQueryChange={(value) => {
+          setRecordQuery(value);
+          setRecordScope('default');
+          if (value.trim()) {
+            setActiveRecordTab('all');
+          }
+        }}
+        query={recordQuery}
+        scheduledCount={scheduledCount}
+        settings={settings}
+      />
+
+      <main className="vimo-center-pane min-h-0 min-w-0">
+        {shellView === 'settings' ? (
+          <SettingsView
+            customModels={customModels}
+            modelOptions={modelOptions}
+            onBack={() => setShellView('chat')}
+            onSelectModel={selectModel}
+            onToggleThinking={toggleThinkingMode}
+            onUpdateProfile={updateProfileSettings}
+            settings={settings}
+          />
+        ) : (
+          <section className="chat-surface relative flex h-full min-h-[540px] min-w-0 flex-col overflow-hidden lg:min-h-0">
+            {pendingPreviews.length ? (
+              <PendingPreviewStrip
+                items={pendingPreviews}
+                onDiscard={handleDiscardPending}
+                onOpen={setActivePendingId}
+              />
+            ) : null}
+
+            {(messages.length || pendingPreviews.length || openContexts.length) ? (
+              <div className="pointer-events-none absolute right-4 top-4 z-10 flex justify-end sm:right-6 sm:top-6">
+                <button
+                  aria-label="清空聊天"
+                  className="pointer-events-auto grid h-8 w-8 place-items-center rounded-[11px] border border-[var(--border-subtle)] bg-[var(--surface-elevated)] text-[var(--text-muted)] shadow-sm backdrop-blur transition hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+                  onClick={() => setClearConfirmOpen(true)}
+                  title="清空聊天"
+                  type="button"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ) : null}
+
+            <div className="flex-1 overflow-y-auto px-2 py-5 sm:px-4 lg:px-6">
+              <div className="mx-auto max-w-4xl space-y-4">
+                {messages.map((message) => {
+                  if (message.role === 'notice') {
+                    return <NoticeMessage content={message.content} key={message.id} />;
+                  }
+                  if (message.role === 'assistant' && !message.content.trim() && !message.preview) {
+                    return null;
+                  }
+                  return (
+                    <div className="space-y-2" key={message.id}>
+                      <MessageBubble
+                        beforeContent={message.role === 'assistant' && message.preview ? <IntentStackPanel preview={message.preview} onOpenPending={setActivePendingId} /> : undefined}
+                        content={message.content}
+                        thinking={message.role === 'assistant' ? message.thinking : undefined}
+                        onCopy={() => copyText(message.content)}
+                        onOpenPending={message.pendingId ? () => setActivePendingId(message.pendingId ?? null) : undefined}
+                        onRetry={message.role === 'user' ? () => retry(message.content) : undefined}
+                        role={message.role}
+                        timestamp={message.createdAt}
+                      />
+                    </div>
+                  );
+                })}
+                {thinking ? <ThinkingBubble /> : null}
+                {error ? <ErrorPill message={error} onRetry={() => retry(lastPromptRef.current)} /> : null}
+                <div ref={bottomRef} />
               </div>
             </div>
-          </div>
-          <div className="flex gap-2">
-            <TopIcon label="AI 回复设置" onClick={() => setSettingsOpen(true)}>
-              <Settings2 size={15} />
-            </TopIcon>
-            <TopIcon label="刷新记录" onClick={() => void reloadRecords()}>
-              <RefreshCw size={15} />
-            </TopIcon>
-            <TopIcon label="清空聊天" onClick={clearChat}>
-              <Trash2 size={15} />
-            </TopIcon>
-          </div>
-        </div>
-      </header>
 
-      <main className="grid min-h-0 flex-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(0,1fr)_360px] lg:overflow-hidden">
-        <section className="flex min-h-[540px] min-w-0 flex-col overflow-hidden rounded-[18px] border border-[#353044] bg-[#0f1018] text-[#f8f4ed] shadow-sm backdrop-blur lg:min-h-0">
-          <div className="border-b border-[#353044] bg-[#181522] px-3.5 py-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="text-[13px] font-bold text-[#f8f4ed]">Chat Agent</div>
-                <div className="mt-0.5 text-[11px] font-medium text-[#d8c8b8]/70">
-                  {openContexts.length ? `有 ${openContexts.length} 个未收口上下文。` : '像聊天一样说，我会结合上下文判断。'}
-                </div>
-              </div>
-              <StatusStrip completedCount={completedCount} savedCount={savedCount} todoCount={todoCount} />
-            </div>
-          </div>
-
-          {pendingPreviews.length ? (
-            <PendingPreviewStrip
-              items={pendingPreviews}
-              onDiscard={handleDiscardPending}
-              onOpen={setActivePendingId}
+            <Composer
+              customModels={customModels}
+              disabled={false}
+              generating={loading}
+              modelOptions={modelOptions}
+              onAddCustomModel={addCustomModel}
+              onDeleteCustomModel={deleteCustomModel}
+              onSelectModel={selectModel}
+              onSend={handleSend}
+              onStop={stopGeneration}
+              onToggleThinking={toggleThinkingMode}
+              selectedModelKey={settings.model_key}
+              thinkingEnabled={settings.thinking_enabled}
             />
-          ) : null}
-
-          <div className="flex-1 overflow-y-auto bg-[#0f1018] px-3.5 py-3">
-            <div className="mx-auto max-w-3xl space-y-3">
-              {messages.map((message) => {
-                if (message.role === 'notice') {
-                  return <NoticeMessage content={message.content} key={message.id} />;
-                }
-                if (message.role === 'assistant' && !message.content.trim() && !message.preview) {
-                  return null;
-                }
-                return (
-                  <div className="space-y-2" key={message.id}>
-                    <MessageBubble
-                      beforeContent={message.role === 'assistant' && message.preview ? <IntentStackPanel preview={message.preview} onOpenPending={setActivePendingId} /> : undefined}
-                      content={message.content}
-                      onCopy={() => copyText(message.content)}
-                      onOpenPending={message.pendingId ? () => setActivePendingId(message.pendingId ?? null) : undefined}
-                      onRetry={message.role === 'user' ? () => retry(message.content) : undefined}
-                      role={message.role}
-                      timestamp={message.createdAt}
-                    />
-                  </div>
-                );
-              })}
-              {thinking ? <ThinkingBubble /> : null}
-              {error ? <ErrorPill message={error} onRetry={() => retry(lastPromptRef.current)} /> : null}
-              <div ref={bottomRef} />
-            </div>
-          </div>
-
-          <Composer disabled={loading} onSend={handleSend} />
-        </section>
-
-        <RecordsPanel
-          onCreate={handleCreateRecord}
-          onDelete={handleDeleteRecord}
-          onRestore={handleRestoreRecord}
-          onUpdate={handleUpdateRecord}
-          records={records}
-        />
+          </section>
+        )}
       </main>
 
-      {settingsOpen ? (
-        <AgentSettingsPanel
-          onChange={commitSettings}
-          onClose={() => setSettingsOpen(false)}
-          modelOptions={modelOptions}
-          settings={settings}
-        />
-      ) : null}
+      <RecordsPanel
+        activeTab={activeRecordTab}
+        onDelete={handleDeleteRecord}
+        onQueryChange={setRecordQuery}
+        onRestore={handleRestoreRecord}
+        onScopeChange={setRecordScope}
+        onTabChange={(tab) => {
+          setActiveRecordTab(tab);
+          setRecordScope('default');
+        }}
+        onUpdate={handleUpdateRecord}
+        query={recordQuery}
+        records={records}
+        scope={recordScope}
+      />
+
       {activePending ? (
         <PendingPreviewModal
           item={activePending}
@@ -938,51 +1061,16 @@ export function ChatAgent() {
           onSave={handleSavePending}
         />
       ) : null}
+      {clearConfirmOpen ? (
+        <ConfirmModal
+          body="会清空当前聊天消息、待补全项和未收口上下文，本地记录不会被删除。"
+          confirmLabel="清空"
+          onCancel={() => setClearConfirmOpen(false)}
+          onConfirm={clearChat}
+          title="清空聊天？"
+        />
+      ) : null}
       {toast ? <Toast message={toast} /> : null}
-    </div>
-  );
-}
-
-function TopIcon({ children, label, onClick }: { children: ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      aria-label={label}
-      className="relative grid h-8 w-8 place-items-center rounded-[12px] border border-[#3a3548] bg-[#242032] text-[#d8c8b8] shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:bg-[#302a3d] hover:text-[#ff85a1] active:translate-y-0"
-      onClick={onClick}
-      title={label}
-      type="button"
-    >
-      {children}
-    </button>
-  );
-}
-
-function StatusStrip({
-  completedCount,
-  savedCount,
-  todoCount,
-}: {
-  completedCount: number;
-  savedCount: number;
-  todoCount: number;
-}) {
-  return (
-    <div className="grid grid-cols-3 gap-1.5">
-      <MiniStat icon={<CheckCircle2 size={13} />} label="记录" tone="bg-[#123040] text-[#8bd8ff]" value={String(savedCount)} />
-      <MiniStat icon={<ClipboardList size={13} />} label="待办" tone="bg-[#14342a] text-[#7ee0a0]" value={String(todoCount)} />
-      <MiniStat icon={<Check size={13} />} label="完成" tone="bg-[#292242] text-[#c8b6ff]" value={String(completedCount)} />
-    </div>
-  );
-}
-
-function MiniStat({ icon, label, tone, value }: { icon: ReactNode; label: string; tone: string; value: string }) {
-  return (
-    <div className="flex h-8 min-w-[72px] items-center gap-1.5 rounded-[12px] border border-[#3a3548] bg-[#242032] px-2 text-[11px] font-bold text-[#d8c8b8] shadow-sm backdrop-blur">
-      <span className={`grid h-5 w-5 place-items-center rounded-full ${tone}`}>{icon}</span>
-      <span className="min-w-0">
-        <span className="block truncate text-[9px] leading-3 text-[#d8c8b8]/75">{label}</span>
-        <span className="block truncate leading-3 text-[#f8f4ed]">{value}</span>
-      </span>
     </div>
   );
 }
@@ -998,17 +1086,17 @@ function PendingPreviewStrip({
 }) {
   const groups = pendingPreviewGroups(items);
   return (
-    <div className="border-b border-[#353044] bg-[#10131b] px-3.5 py-2">
-      <div className="mx-auto max-w-3xl space-y-1.5">
+    <div className="border-b border-[var(--border-subtle)] bg-[var(--surface-soft)] px-3.5 py-2">
+      <div className="mx-auto max-w-4xl space-y-1.5">
         <div className="flex items-center justify-between gap-2">
-          <span className="flex shrink-0 items-center gap-1 text-[10px] font-bold text-[#d8c8b8]/65">
+          <span className="flex shrink-0 items-center gap-1 text-[10px] font-bold text-[var(--text-muted)]">
             <Sparkles size={11} />
           待补全
-            <span className="rounded-full bg-[#242032] px-1.5 py-0.5 text-[9px] text-[#f8f4ed]">{items.length}</span>
+            <span className="rounded-full bg-[var(--surface-elevated)] px-1.5 py-0.5 text-[9px] text-[var(--text-strong)]">{items.length}</span>
           </span>
           <button
             aria-label="丢弃最新待确认"
-            className="grid h-7 w-7 shrink-0 place-items-center rounded-[10px] text-[#d8c8b8]/45 transition hover:bg-[#3b1728] hover:text-[#ff85a1]"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-[9px] text-[var(--text-faint)] transition hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
             onClick={() => onDiscard(items[0].id)}
             title="丢弃最新"
             type="button"
@@ -1020,27 +1108,27 @@ function PendingPreviewStrip({
           {groups.map((group) => {
             const Icon = group.icon;
             return (
-              <div className="min-w-0 rounded-[12px] border border-[#353044] bg-[#181522] p-1.5" key={group.key}>
-                <div className="mb-1 flex items-center gap-1.5 px-1 text-[10px] font-bold text-[#d8c8b8]/65">
+              <div className="min-w-0 rounded-[12px] border border-[var(--border-subtle)] bg-[var(--surface-elevated)] p-1.5" key={group.key}>
+                <div className="mb-1 flex items-center gap-1.5 px-1 text-[10px] font-bold text-[var(--text-muted)]">
                   <Icon size={11} />
                   <span>{group.label}</span>
-                  <span className="text-[#d8c8b8]/40">{group.items.length}</span>
+                  <span className="text-[var(--text-faint)]">{group.items.length}</span>
                 </div>
                 <div className="flex min-w-0 gap-1 overflow-x-auto">
                   {group.items.map((item) => (
-                    <div className="flex h-7 max-w-[230px] shrink-0 items-center rounded-[9px] border border-[#3a3548] bg-[#111018] text-[11px] font-semibold text-[#d8c8b8]" key={item.id}>
+                    <div className="flex h-7 max-w-[230px] shrink-0 items-center rounded-[9px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] text-[11px] font-semibold text-[var(--text)]" key={item.id}>
                       <button
-                        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 text-left transition hover:text-[#f8f4ed]"
+                        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 text-left transition hover:text-[var(--text-strong)]"
                         onClick={() => onOpen(item.id)}
                         title={pendingPreviewReason(item.preview)}
                         type="button"
                       >
                         <span className="truncate">{item.preview.title || fallbackTitle(item.preview.type, item.preview.content)}</span>
-                        <span className="shrink-0 text-[#d8c8b8]/50">{pendingPreviewShortLabel(item.preview)}</span>
+                        <span className="shrink-0 text-[var(--text-faint)]">{pendingPreviewShortLabel(item.preview)}</span>
                       </button>
                       <button
                         aria-label="删除上下文"
-                        className="grid h-6 w-6 shrink-0 place-items-center rounded-[8px] text-[#d8c8b8]/45 transition hover:bg-[#3b1728] hover:text-[#ff85a1]"
+                        className="grid h-6 w-6 shrink-0 place-items-center rounded-[8px] text-[var(--text-faint)] transition hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
                         onClick={() => onDiscard(item.id)}
                         title="删除上下文"
                         type="button"
@@ -1127,15 +1215,15 @@ function PendingPreviewModal({
 }) {
   return (
     <div className="absolute inset-0 z-40 flex items-start justify-center bg-black/50 px-4 py-5 backdrop-blur-sm">
-      <div className="w-full max-w-[460px] text-[#f8f4ed]">
-        <div className="mb-2 flex items-center justify-between gap-2 rounded-[16px] border border-[#353044] bg-[#111018]/95 px-3 py-2 shadow-sm">
+      <div className="w-full max-w-[460px] text-[var(--text-strong)]">
+        <div className="mb-2 flex items-center justify-between gap-2 rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-elevated)] px-3 py-2 shadow-sm">
           <div className="min-w-0">
             <div className="text-sm font-bold">补全这条记录</div>
-            <div className="truncate text-[11px] font-medium text-[#d8c8b8]/65">{item.created_at}</div>
+            <div className="truncate text-[11px] font-medium text-[var(--text-muted)]">{item.created_at}</div>
           </div>
           <button
             aria-label="关闭待确认"
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-[12px] text-[#d8c8b8]/70 transition hover:bg-[#302a3d] hover:text-[#ff85a1]"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px] text-[var(--text-muted)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--danger)]"
             onClick={onClose}
             title="关闭"
             type="button"
@@ -1159,6 +1247,48 @@ function PendingPreviewModal({
   );
 }
 
+function ConfirmModal({
+  body,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+  title,
+}: {
+  body: string;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+  title: string;
+}) {
+  return (
+    <div className="modal-backdrop">
+      <div className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+        <div className="flex items-start gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] bg-[var(--danger-soft)] text-[var(--danger)]">
+            <Trash2 size={16} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold text-[var(--text-strong)]" id="confirm-modal-title">{title}</div>
+            <div className="mt-1 text-xs font-medium leading-5 text-[var(--text-muted)]">{body}</div>
+          </div>
+          <button aria-label="关闭" className="icon-button" onClick={onCancel} title="关闭" type="button">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button className="secondary-button" onClick={onCancel} type="button">
+            取消
+          </button>
+          <button className="danger-button" onClick={onConfirm} type="button">
+            <Trash2 size={14} />
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function IntentStackPanel({ preview, onOpenPending }: { preview: RecordPreview; onOpenPending: (pendingId: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const intents = intentItemsForPreview(preview);
@@ -1169,28 +1299,28 @@ function IntentStackPanel({ preview, onOpenPending }: { preview: RecordPreview; 
   }
   const summary = intentStackSummary(intents, candidates, traceItems);
   return (
-    <div className="w-full max-w-full rounded-[9px] border border-[#353044] bg-[#111018] text-[#d8c8b8]">
+    <div className="w-full max-w-full rounded-[9px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] text-[var(--text-muted)]">
       <button
         aria-expanded={expanded}
-        className="flex min-h-5 w-full items-center justify-between gap-2 rounded-[9px] px-1.5 py-0.5 text-left transition hover:bg-[#181522]"
+        className="flex min-h-5 w-full items-center justify-between gap-2 rounded-[9px] px-1.5 py-0.5 text-left transition hover:bg-[var(--surface-hover)]"
         onClick={() => setExpanded((current) => !current)}
         type="button"
       >
-        <span className="flex min-w-0 items-center gap-1 text-[10px] font-bold leading-3 text-[#d8c8b8]/72">
+        <span className="flex min-w-0 items-center gap-1 text-[10px] font-bold leading-3 text-[var(--text-muted)]">
           <Sparkles size={11} />
           <span className="shrink-0">意图栈</span>
-          <span className="min-w-0 truncate font-semibold text-[#d8c8b8]/50">{summary}</span>
+          <span className="min-w-0 truncate font-semibold text-[var(--text-faint)]">{summary}</span>
         </span>
-        <ChevronDown className={`shrink-0 text-[#d8c8b8]/55 transition ${expanded ? 'rotate-180' : ''}`} size={13} />
+        <ChevronDown className={`shrink-0 text-[var(--text-faint)] transition ${expanded ? 'rotate-180' : ''}`} size={13} />
       </button>
       {expanded ? (
-        <div className="border-t border-[#353044] p-2">
+        <div className="border-t border-[var(--border-subtle)] p-2">
           {intents.length ? (
             <div className="mb-2 flex flex-wrap gap-1.5">
               {intents.map((intent, index) => (
                 <span
                   className={`inline-flex max-w-full items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold ${
-                    index === 0 ? 'bg-[#14342a] text-[#7ee0a0]' : 'bg-[#242032] text-[#d8c8b8]'
+                    index === 0 ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--surface-soft)] text-[var(--text-muted)]'
                   }`}
                   key={intent.id ?? `${intent.intent}-${index}`}
                   title={intent.evidence?.join(' / ') ?? ''}
@@ -1208,18 +1338,18 @@ function IntentStackPanel({ preview, onOpenPending }: { preview: RecordPreview; 
                 const pendingId = candidatePendingId(preview, candidate, index);
                 return (
                   <button
-                    className="flex min-h-8 items-center justify-between gap-2 rounded-[10px] border border-[#353044] bg-[#181522] px-2 py-1.5 text-left transition hover:border-[#70521f] hover:bg-[#242032]"
+                    className="flex min-h-8 items-center justify-between gap-2 rounded-[10px] border border-[var(--border-subtle)] bg-[var(--surface-elevated)] px-2 py-1.5 text-left transition hover:border-[var(--accent)] hover:bg-[var(--surface-hover)]"
                     key={candidate.id ?? `${candidate.intent_id}-${index}`}
                     onClick={() => onOpenPending(pendingId)}
                     type="button"
                   >
                     <span className="min-w-0">
-                      <span className="block truncate text-[11px] font-bold text-[#f8f4ed]">
+                      <span className="block truncate text-[11px] font-bold text-[var(--text-strong)]">
                         {index === 0 ? '主候选' : '副候选'} · {typeLabel[candidate.type]} · {candidate.title || fallbackTitle(candidate.type, candidate.content)}
                       </span>
-                      <span className="mt-0.5 block truncate text-[10px] font-semibold text-[#d8c8b8]/60">{candidateDecisionLabel(candidate.execution_decision)}</span>
+                      <span className="mt-0.5 block truncate text-[10px] font-semibold text-[var(--text-muted)]">{candidateDecisionLabel(candidate.execution_decision)}</span>
                     </span>
-                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${candidate.primary ? 'bg-[#14342a] text-[#7ee0a0]' : 'bg-[#242032] text-[#d8c8b8]'}`}>
+                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${candidate.primary ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--surface-soft)] text-[var(--text-muted)]'}`}>
                       {Math.round((candidate.confidence || 0) * 100)}%
                     </span>
                   </button>
@@ -1230,7 +1360,7 @@ function IntentStackPanel({ preview, onOpenPending }: { preview: RecordPreview; 
           {traceItems.length ? (
             <div className="mt-2 flex flex-wrap gap-1">
               {traceItems.map((item) => (
-                <span className="rounded-full border border-[#353044] bg-[#181522] px-1.5 py-0.5 text-[10px] font-semibold text-[#d8c8b8]/65" key={item}>
+                <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--surface-elevated)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--text-muted)]" key={item}>
                   {item}
                 </span>
               ))}
@@ -1313,171 +1443,242 @@ function traceItemsForPreview(preview: RecordPreview) {
   return items.filter(Boolean).slice(0, 8);
 }
 
-function AgentSettingsPanel({
-  modelOptions,
+function LeftSidebar({
+  activeView,
+  onOpenChat,
+  onOpenScheduled,
+  onOpenSettings,
+  onQueryChange,
+  query,
+  scheduledCount,
   settings,
-  onChange,
-  onClose,
 }: {
-  modelOptions: AgentModelOption[];
+  activeView: ShellView;
+  onOpenChat: () => void;
+  onOpenScheduled: () => void;
+  onOpenSettings: () => void;
+  onQueryChange: (value: string) => void;
+  query: string;
+  scheduledCount: number;
   settings: AgentSettings;
-  onChange: (settings: AgentSettings) => void;
-  onClose: () => void;
 }) {
-  const [draft, setDraft] = useState(settings);
-  const selectedModel = modelOptions.find((model) => model.key === draft.model_key) ?? modelOptions.find((model) => model.default) ?? modelOptions[0];
-  const selectedPreset = presetOptions.find((option) => option.value === draft.preset) ?? presetOptions[0];
+  return (
+    <aside className="vimo-left-sidebar">
+      <div className="vimo-sidebar-top min-w-0 space-y-3">
+        <button className="vimo-brand-button" onClick={onOpenChat} type="button">
+          <span className="vimo-brand-mark">V</span>
+          <span className="min-w-0">
+            <span className="block truncate text-[13px] font-semibold text-[var(--text-strong)]">Vimo</span>
+            <span className="block truncate text-[11px] font-medium text-[var(--text-muted)]">Personal memory</span>
+          </span>
+        </button>
 
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    onChange({
-      preset: draft.preset,
-      custom_style: draft.custom_style.trim(),
-      nickname: draft.nickname.trim(),
-      model_key: draft.model_key,
-    });
-    onClose();
-  }
+        <label className="vimo-sidebar-search">
+          <Search size={15} className="shrink-0 text-[var(--text-faint)]" />
+          <input
+            aria-label="搜索记录"
+            className="min-w-0 flex-1 border-0 bg-transparent text-[13px] font-medium text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)]"
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="搜索"
+            value={query}
+          />
+        </label>
+
+        <button className="vimo-sidebar-action" onClick={onOpenScheduled} type="button">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px] bg-[var(--accent-soft)] text-[var(--accent)]">
+            <CalendarCheck2 size={16} />
+          </span>
+          <span className="min-w-0 flex-1 text-left">
+            <span className="block truncate text-[13px] font-semibold">定时任务</span>
+            <span className="block truncate text-[11px] font-medium text-[var(--text-muted)]">{scheduledCount ? `${scheduledCount} 个待提醒` : '暂无待提醒'}</span>
+          </span>
+        </button>
+      </div>
+
+      <button className="vimo-profile-button" data-active={activeView === 'settings'} onClick={onOpenSettings} type="button">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--text-strong)] text-[var(--app-bg)]">
+          <UserRound size={17} />
+        </span>
+        <span className="min-w-0 flex-1 text-left">
+          <span className="block truncate text-[13px] font-semibold text-[var(--text-strong)]">{settings.nickname.trim() || '个人资料'}</span>
+          <span className="block truncate text-[11px] font-medium text-[var(--text-muted)]">设置与偏好</span>
+        </span>
+        <Settings2 size={15} className="shrink-0 text-[var(--text-faint)]" />
+      </button>
+    </aside>
+  );
+}
+
+function SettingsView({
+  customModels,
+  modelOptions,
+  onBack,
+  onSelectModel,
+  onToggleThinking,
+  onUpdateProfile,
+  settings,
+}: {
+  customModels: CustomAgentModel[];
+  modelOptions: AgentModelOption[];
+  onBack: () => void;
+  onSelectModel: (modelKey: string) => void;
+  onToggleThinking: (enabled: boolean) => void;
+  onUpdateProfile: (patch: Partial<Pick<AgentSettings, 'preset' | 'custom_style' | 'nickname'>>) => void;
+  settings: AgentSettings;
+}) {
+  const allModels = useMemo(() => combineAgentModels(modelOptions, customModels), [customModels, modelOptions]);
+  const selectedModel = allModels.find((model) => model.key === settings.model_key) ?? allModels.find((model) => model.default) ?? allModels[0];
+  const canThink = Boolean(selectedModel?.supports_thinking);
+  const presets: Array<{ value: ReplyPreset; label: string }> = [
+    { value: 'INTJ', label: 'INTJ' },
+    { value: 'ENFJ', label: 'ENFJ' },
+    { value: 'ISTP', label: 'ISTP' },
+    { value: 'ENFP', label: 'ENFP' },
+    { value: 'custom', label: '自定义' },
+  ];
 
   return (
-    <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/50 px-3 py-3 backdrop-blur-sm sm:px-4">
-      <form
-        className="max-h-[calc(100dvh-24px)] w-full max-w-lg overflow-y-auto rounded-[20px] border border-[#353044] bg-[#111018]/95 p-3 text-[#f8f4ed] shadow-float sm:p-3.5"
-        onSubmit={submit}
-      >
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <div className="text-[15px] font-bold leading-5">AI 回复设置</div>
-            <div className="mt-0.5 text-[11px] font-semibold leading-4 text-[#d8c8b8]/70">模型生成回复，这里只设置风格和称呼。</div>
-          </div>
-          <button
-            aria-label="关闭设置"
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-[12px] border border-[#353044] bg-[#242032] text-[#d8c8b8] transition hover:bg-[#302a3d] hover:text-[#ff85a1]"
-            onClick={onClose}
-            title="关闭"
-            type="button"
-          >
-            <X size={15} />
+    <section className="settings-view h-full overflow-y-auto">
+      <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-5 sm:px-6 lg:px-8">
+        <div className="mb-6 flex items-center justify-between gap-3">
+          <button className="secondary-button" onClick={onBack} type="button">
+            <ArrowLeft size={15} />
+            返回
           </button>
+          <div className="text-right">
+            <div className="text-sm font-semibold text-[var(--text-strong)]">设置</div>
+            <div className="text-xs font-medium text-[var(--text-muted)]">本地偏好</div>
+          </div>
         </div>
 
-        <div className="mb-3 rounded-[16px] border border-[#353044] bg-[#181522] p-2.5">
-          <label className="block text-[11px] font-bold text-[#d8c8b8]/75" htmlFor="agent-model-select">
-            模型
-          </label>
-          {modelOptions.length ? (
-            <>
-              <div className="relative mt-1.5">
+        <div className="space-y-5">
+          <section className="settings-section">
+            <div className="settings-section-heading">
+              <UserRound size={17} />
+              <span>个人资料</span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="称呼">
+                <input
+                  className="text-field"
+                  onChange={(event) => onUpdateProfile({ nickname: event.target.value })}
+                  placeholder="你希望 Vimo 怎么称呼你"
+                  value={settings.nickname}
+                />
+              </Field>
+              <Field label="回复风格">
                 <select
-                  className="h-9 w-full appearance-none rounded-[12px] border border-[#3a3548] bg-[#242032] px-2.5 pr-8 text-xs font-bold text-[#f8f4ed] outline-none transition hover:bg-[#302a3d] focus:border-[#8bd8ff] focus:bg-[#181522]"
-                  id="agent-model-select"
-                  onChange={(event) => setDraft({ ...draft, model_key: event.target.value })}
-                  value={selectedModel?.key ?? ''}
+                  className="text-field"
+                  onChange={(event) => onUpdateProfile({ preset: event.target.value as ReplyPreset })}
+                  value={settings.preset}
                 >
-                  {modelOptions.map((model) => (
-                    <option key={model.key} value={model.key}>
-                      {model.label}
+                  {presets.map((preset) => (
+                    <option key={preset.value} value={preset.value}>
+                      {preset.label}
                     </option>
                   ))}
                 </select>
-                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#d8c8b8]/65" size={14} />
-              </div>
-              {selectedModel ? (
-                <div className="mt-2 rounded-[12px] border border-[#353044] bg-[#111018] px-2.5 py-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-[11px] font-bold text-[#f8f4ed]">{selectedModel.label}</span>
-                    <span className="rounded-full bg-[#123040] px-1.5 py-0.5 text-[10px] font-bold leading-3 text-[#8bd8ff]">
-                      {selectedModel.default ? '默认' : '已选'}
-                    </span>
-                  </div>
-                  <p className="mt-1 line-clamp-2 text-[11px] font-semibold leading-4 text-[#d8c8b8]/68">{selectedModel.description || selectedModel.model}</p>
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <div className="mt-1.5 rounded-[12px] border border-[#353044] bg-[#242032] px-2.5 py-2 text-[11px] font-semibold text-[#d8c8b8]/75">
-              模型列表加载失败，请确认后端服务已启动。
+              </Field>
             </div>
-          )}
-        </div>
+            <Field label="自定义风格">
+              <textarea
+                className="min-h-24 w-full resize-none rounded-[12px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-3 py-2 text-sm font-medium leading-6 text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)]"
+                onChange={(event) => onUpdateProfile({ custom_style: event.target.value })}
+                placeholder="例如：更简洁、更温和、少用列表"
+                value={settings.custom_style}
+              />
+            </Field>
+          </section>
 
-        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
-          {presetOptions.map((option) => (
-            <button
-              className={`h-9 rounded-[12px] border px-2 text-center text-xs font-bold transition hover:-translate-y-px ${
-                draft.preset === option.value
-                  ? 'border-[#b85d70] bg-[#70521f]/75 text-[#f8f4ed] shadow-sm'
-                  : 'border-[#353044] bg-[#242032] text-[#d8c8b8] hover:bg-[#302a3d]'
-              }`}
-              key={option.value}
-              onClick={() => setDraft({ ...draft, preset: option.value })}
-              type="button"
-            >
-              {option.label}
-            </button>
-          ))}
+          <section className="settings-section">
+            <div className="settings-section-heading">
+              <ServerIcon />
+              <span>模型</span>
+            </div>
+            <div className="grid gap-2">
+              {allModels.length ? (
+                allModels.map((model) => {
+                  const selected = model.key === selectedModel?.key;
+                  return (
+                    <button className="settings-model-row" data-active={selected} key={model.key} onClick={() => onSelectModel(model.key)} type="button">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[11px] bg-[var(--surface-soft)] text-[var(--text-muted)]">
+                        <ServerIcon />
+                      </span>
+                      <span className="min-w-0 flex-1 text-left">
+                        <span className="block truncate text-[13px] font-semibold text-[var(--text-strong)]">{model.label}</span>
+                        <span className="block truncate text-[11px] font-medium text-[var(--text-muted)]">{model.description || model.model}</span>
+                      </span>
+                      {model.supports_thinking ? <Brain size={14} className="shrink-0 text-[var(--accent)]" /> : null}
+                      {selected ? <CheckCircle2 size={16} className="shrink-0 text-[var(--accent)]" /> : null}
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="rounded-[12px] bg-[var(--surface-soft)] px-3 py-3 text-xs font-semibold text-[var(--text-muted)]">模型列表加载中</div>
+              )}
+            </div>
+            {canThink ? (
+              <button
+                aria-pressed={settings.thinking_enabled}
+                className="settings-toggle-row"
+                data-active={settings.thinking_enabled}
+                onClick={() => onToggleThinking(!settings.thinking_enabled)}
+                type="button"
+              >
+                <span className="grid h-8 w-8 place-items-center rounded-[10px] bg-[var(--accent-soft)] text-[var(--accent)]">
+                  <Brain size={15} />
+                </span>
+                <span className="min-w-0 flex-1 text-left">
+                  <span className="block text-[13px] font-semibold text-[var(--text-strong)]">思考模式</span>
+                  <span className="block text-[11px] font-medium text-[var(--text-muted)]">请求并展示模型返回的 reasoning</span>
+                </span>
+                <span className="settings-toggle-knob" />
+              </button>
+            ) : null}
+          </section>
         </div>
-        <p className="mt-1.5 rounded-[12px] border border-[#353044] bg-[#181522] px-2.5 py-1.5 text-[11px] font-semibold leading-4 text-[#d8c8b8]/70">
-          {selectedPreset.description}
-        </p>
+      </div>
+    </section>
+  );
+}
 
-        <div className="mt-3 grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)]">
-          <label className="block text-[11px] font-bold text-[#d8c8b8]/75">
-            称呼
-            <input
-              className="mt-1 h-9 w-full rounded-[12px] border border-[#3a3548] bg-[#181522] px-2.5 text-xs font-semibold text-[#f8f4ed] outline-none placeholder:text-[#d8c8b8]/55 focus:border-[#8bd8ff]"
-              onChange={(event) => setDraft({ ...draft, nickname: event.target.value })}
-              placeholder="比如：阿明"
-              value={draft.nickname}
-            />
-          </label>
-          <label className="block text-[11px] font-bold text-[#d8c8b8]/75">
-            自定义风格
-            <input
-              className="mt-1 h-9 w-full rounded-[12px] border border-[#3a3548] bg-[#181522] px-2.5 text-xs font-semibold text-[#f8f4ed] outline-none placeholder:text-[#d8c8b8]/55 focus:border-[#8bd8ff]"
-              onChange={(event) => setDraft({ ...draft, custom_style: event.target.value, preset: 'custom' })}
-              placeholder="比如：calm, strategic, brief"
-              value={draft.custom_style}
-            />
-          </label>
-        </div>
+function ServerIcon() {
+  return <Sparkles size={15} />;
+}
 
-        <div className="mt-3 flex justify-end gap-1.5">
-          <button
-            className="h-9 rounded-[12px] border border-[#353044] bg-[#242032] px-3 text-xs font-bold text-[#d8c8b8] transition hover:bg-[#302a3d] hover:text-[#ff85a1]"
-            onClick={onClose}
-            type="button"
-          >
-            取消
-          </button>
-          <button
-            className="h-9 rounded-[12px] bg-[#70521f] px-3 text-xs font-bold text-[#f8f4ed] shadow-sm transition hover:-translate-y-px hover:bg-[#3a202d]"
-            type="submit"
-          >
-            保存偏好
-          </button>
-        </div>
-      </form>
-    </div>
+function Field({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <label className="block text-xs font-semibold text-[var(--text-muted)]">
+      {label}
+      <div className="mt-1.5">{children}</div>
+    </label>
   );
 }
 
 function RecordsPanel({
+  activeTab,
   records,
-  onCreate,
+  query,
+  scope,
   onDelete,
+  onQueryChange,
   onRestore,
+  onScopeChange,
+  onTabChange,
   onUpdate,
 }: {
+  activeTab: RecordTab;
   records: RecordItem[];
-  onCreate: (draft: RecordDraft) => void;
+  query: string;
+  scope: RecordScope;
   onDelete: (id: string) => void;
+  onQueryChange: (query: string) => void;
   onRestore: (id: string) => void;
+  onScopeChange: (scope: RecordScope) => void;
+  onTabChange: (tab: RecordTab) => void;
   onUpdate: (id: string, draft: RecordDraft) => void;
 }) {
-  const [activeTab, setActiveTab] = useState<RecordTab>('all');
-  const [query, setQuery] = useState('');
-  const [formMode, setFormMode] = useState<'create' | 'edit' | null>(null);
+  const [formMode, setFormMode] = useState<'edit' | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<RecordDraft>(() => createEmptyDraft());
 
@@ -1493,21 +1694,15 @@ function RecordsPanel({
             : activeTab === 'pending'
               ? !inTrash && record.status === 'need_confirmation'
               : !inTrash && record.type === activeTab;
+      const matchScope = scope === 'scheduled' ? isScheduledTodo(record) : true;
       const matchSearch =
         !searchText ||
         `${record.title} ${record.content} ${typeLabel[record.type]} ${record.datetime_iso ?? ''}`
           .toLowerCase()
           .includes(searchText);
-      return matchTab && matchSearch;
+      return matchTab && matchScope && matchSearch;
     });
-  }, [activeTab, query, records]);
-
-  function startCreate() {
-    const initialType = activeTab === 'all' || activeTab === 'pending' || activeTab === 'trash' ? 'todo' : activeTab;
-    setDraft(createEmptyDraft(initialType));
-    setEditingId(null);
-    setFormMode('create');
-  }
+  }, [activeTab, query, records, scope]);
 
   function startEdit(record: RecordItem) {
     setDraft(draftFromRecord(record));
@@ -1522,8 +1717,6 @@ function RecordsPanel({
     }
     if (formMode === 'edit' && editingId) {
       onUpdate(editingId, draft);
-    } else {
-      onCreate(draft);
     }
     setFormMode(null);
     setEditingId(null);
@@ -1538,30 +1731,21 @@ function RecordsPanel({
   }
 
   return (
-    <aside className="relative flex min-h-[500px] min-w-0 flex-col overflow-hidden rounded-[18px] border border-[#353044] bg-[#0f1018] text-[#f8f4ed] shadow-sm backdrop-blur lg:min-h-0">
-      <div className="border-b border-[#353044] bg-[#181522] px-3 py-3">
-        <div className="mb-2 flex items-center justify-between gap-2">
+    <aside className="records-panel relative flex min-h-[500px] min-w-0 flex-col overflow-hidden lg:min-h-0">
+      <div className="border-b border-[var(--border-subtle)] px-3 py-3">
+        <div className="mb-2 flex items-center gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[12px] bg-[#14342a] text-[#7ee0a0]">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px] bg-[var(--success-soft)] text-[var(--success)]">
               <ListChecks size={14} />
             </span>
             <div className="min-w-0">
-              <div className="text-[13px] font-bold text-[#f8f4ed]">记录</div>
-              <div className="truncate text-[11px] font-medium text-[#d8c8b8]/70">Records API · {records.length}</div>
+              <div className="text-[13px] font-bold text-[var(--text-strong)]">记录</div>
+              <div className="truncate text-[11px] font-medium text-[var(--text-muted)]">Records API · {records.length}</div>
             </div>
           </div>
-          <button
-            aria-label="新增记录"
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-[12px] bg-[#70521f] text-[#f8f4ed] shadow-pop transition hover:-translate-y-0.5 hover:bg-[#3a202d] active:translate-y-0"
-            onClick={startCreate}
-            title="新增"
-            type="button"
-          >
-            <Plus size={14} />
-          </button>
         </div>
 
-        <div className="mb-2 grid grid-cols-3 gap-1.5">
+        <div className="record-tabs-strip mb-2 flex gap-1.5 overflow-x-auto pb-1">
           {recordTabs.map((tab) => (
             <RecordTabButton
               active={activeTab === tab.value}
@@ -1569,29 +1753,45 @@ function RecordsPanel({
               icon={tab.icon}
               key={tab.value}
               label={tab.label}
-              onClick={() => setActiveTab(tab.value)}
+              onClick={() => onTabChange(tab.value)}
               tab={tab.value}
             />
           ))}
         </div>
 
-        <label className="flex h-8 items-center gap-1.5 rounded-[12px] border border-[#3a3548] bg-[#242032] px-2.5 text-[#d8c8b8] shadow-sm">
-          <Search size={13} className="shrink-0 text-[#d8c8b8]/60" />
+        {scope === 'scheduled' ? (
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-[10px] bg-[var(--accent-soft)] px-2.5 py-2 text-[11px] font-semibold text-[var(--accent)]">
+            <span className="inline-flex min-w-0 items-center gap-1.5">
+              <CalendarCheck2 size={13} />
+              <span className="truncate">定时任务</span>
+            </span>
+            <button className="rounded-[8px] px-1.5 py-0.5 text-[var(--accent)] transition hover:bg-[var(--surface-hover)]" onClick={() => onScopeChange('default')} type="button">
+              全部
+            </button>
+          </div>
+        ) : null}
+
+        <label className="flex h-8 items-center gap-1.5 rounded-[10px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-2.5 text-[var(--text-muted)] shadow-sm">
+          <Search size={13} className="shrink-0 text-[var(--text-faint)]" />
           <input
             aria-label="搜索记录"
-            className="min-w-0 flex-1 border-0 bg-transparent text-xs font-medium text-[#f8f4ed] outline-none placeholder:text-[#d8c8b8]/55"
-            onChange={(event) => setQuery(event.target.value)}
+            className="min-w-0 flex-1 border-0 bg-transparent text-xs font-medium text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)]"
+            onChange={(event) => {
+              onScopeChange('default');
+              onQueryChange(event.target.value);
+            }}
             placeholder="搜索"
             value={query}
           />
         </label>
       </div>
 
-      <div className="flex-1 overflow-y-auto bg-[#0f1018] p-3">
+      <div className="flex-1 overflow-y-auto p-3">
         <div className="space-y-2">
           {visibleRecords.length ? (
             visibleRecords.map((record) => (
-              <RecordRow
+              <RecordPreviewRow
+                activeTab={activeTab}
                 key={record.id}
                 onDelete={onDelete}
                 onEdit={startEdit}
@@ -1601,7 +1801,7 @@ function RecordsPanel({
               />
             ))
           ) : (
-            <EmptyRecords onCreate={startCreate} />
+            <EmptyRecords />
           )}
         </div>
       </div>
@@ -1641,23 +1841,203 @@ function RecordTabButton({
 }) {
   const activeTone =
     tab === 'all'
-      ? 'data-[active=true]:bg-[#302a3d] data-[active=true]:text-[#f8f4ed]'
+      ? 'data-[active=true]:bg-[var(--surface-hover)] data-[active=true]:text-[var(--text-strong)]'
       : tab === 'pending'
         ? typeMeta.unknown.tab
         : tab === 'trash'
-          ? 'data-[active=true]:bg-[#3b1728] data-[active=true]:text-[#ff85a1]'
+          ? 'data-[active=true]:bg-[var(--danger-soft)] data-[active=true]:text-[var(--danger)]'
           : typeMeta[tab].tab;
   return (
     <button
-      className={`flex h-8 min-w-0 items-center justify-center gap-1 rounded-[12px] border border-[#3a3548] bg-[#242032] px-1.5 text-[11px] font-bold text-[#d8c8b8]/70 shadow-sm transition hover:-translate-y-0.5 hover:bg-[#302a3d] active:translate-y-0 ${activeTone}`}
+      className={`flex h-8 min-w-[82px] items-center justify-center gap-1 rounded-[10px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-1.5 text-[11px] font-bold text-[var(--text-muted)] shadow-sm transition hover:-translate-y-0.5 hover:bg-[var(--surface-hover)] active:translate-y-0 ${activeTone}`}
       data-active={active}
       onClick={onClick}
       type="button"
     >
       <Icon size={13} className="shrink-0" />
       <span className="truncate">{label}</span>
-      <span className="rounded-full bg-[#111018] px-1.5 py-0.5 text-[10px] text-[#d8c8b8]/70">{count}</span>
+      <span className="rounded-full bg-[var(--surface-elevated)] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]">{count}</span>
     </button>
+  );
+}
+
+function RecordPreviewRow({
+  activeTab,
+  record,
+  onDelete,
+  onEdit,
+  onRestore,
+  onToggleDone,
+}: {
+  activeTab: RecordTab;
+  record: RecordItem;
+  onDelete: (id: string) => void;
+  onEdit: (record: RecordItem) => void;
+  onRestore: (id: string) => void;
+  onToggleDone: (record: RecordItem) => void;
+}) {
+  if (record.status === 'discarded' || activeTab === 'trash' || activeTab === 'pending' || activeTab === 'all') {
+    return <RecordRow onDelete={onDelete} onEdit={onEdit} onRestore={onRestore} onToggleDone={onToggleDone} record={record} />;
+  }
+  if (record.type === 'todo') {
+    return <TodoRecordRow onDelete={onDelete} onEdit={onEdit} onToggleDone={onToggleDone} record={record} />;
+  }
+  if (record.type === 'idea') {
+    return <IdeaRecordRow onDelete={onDelete} onEdit={onEdit} record={record} />;
+  }
+  if (record.type === 'memo') {
+    return <MemoRecordRow onDelete={onDelete} onEdit={onEdit} record={record} />;
+  }
+  if (record.type === 'journal') {
+    return <JournalRecordRow onDelete={onDelete} onEdit={onEdit} record={record} />;
+  }
+  return <RecordRow onDelete={onDelete} onEdit={onEdit} onRestore={onRestore} onToggleDone={onToggleDone} record={record} />;
+}
+
+function TodoRecordRow({
+  record,
+  onDelete,
+  onEdit,
+  onToggleDone,
+}: {
+  record: RecordItem;
+  onDelete: (id: string) => void;
+  onEdit: (record: RecordItem) => void;
+  onToggleDone: (record: RecordItem) => void;
+}) {
+  const completed = record.status === 'completed';
+  return (
+    <article className={`record-preview-item todo-preview ${completed ? 'opacity-70' : ''}`}>
+      <button
+        aria-label={completed ? '恢复待办' : '完成待办'}
+        className="record-check-button"
+        data-active={completed}
+        onClick={() => onToggleDone(record)}
+        title={completed ? '恢复' : '完成'}
+        type="button"
+      >
+        <CheckCircle2 size={15} />
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className={`text-[13px] font-semibold text-[var(--text-strong)] ${completed ? 'line-through' : ''}`}>{record.title || fallbackTitle(record.type, record.content)}</div>
+        <p className="mt-1 line-clamp-2 text-[12px] font-medium leading-5 text-[var(--text-muted)]">{record.content}</p>
+        <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-bold text-[var(--text-muted)]">
+          {record.datetime_iso ? (
+            <span className="record-mini-chip">
+              <Clock3 size={10} />
+              {record.datetime_iso}
+            </span>
+          ) : null}
+          {record.need_reminder ? (
+            <span className="record-mini-chip text-[var(--danger)]">
+              <Bell size={10} />
+              提醒
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <RecordInlineActions onDelete={() => onDelete(record.id)} onEdit={() => onEdit(record)} />
+    </article>
+  );
+}
+
+function IdeaRecordRow({
+  record,
+  onDelete,
+  onEdit,
+}: {
+  record: RecordItem;
+  onDelete: (id: string) => void;
+  onEdit: (record: RecordItem) => void;
+}) {
+  return (
+    <article className="record-preview-item idea-preview">
+      <div className="flex min-w-0 items-start gap-2">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[11px] bg-[#fff1b8] text-[#8a5a00] dark:bg-[#3d3213] dark:text-[#f5cd65]">
+          <Lightbulb size={15} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-semibold text-[var(--text-strong)]">{record.title || fallbackTitle(record.type, record.content)}</div>
+          <p className="mt-2 line-clamp-4 text-[12px] font-medium leading-5 text-[var(--text)]">{record.content}</p>
+          <div className="mt-2 text-[10px] font-bold text-[var(--text-faint)]">{formatDisplayTimestamp(record.updated_at)}</div>
+        </div>
+      </div>
+      <RecordInlineActions onDelete={() => onDelete(record.id)} onEdit={() => onEdit(record)} />
+    </article>
+  );
+}
+
+function MemoRecordRow({
+  record,
+  onDelete,
+  onEdit,
+}: {
+  record: RecordItem;
+  onDelete: (id: string) => void;
+  onEdit: (record: RecordItem) => void;
+}) {
+  return (
+    <article className="record-preview-item memo-preview">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-[12px] font-bold text-[var(--text-muted)]">
+          <StickyNote size={14} />
+          <span className="truncate">{record.title || fallbackTitle(record.type, record.content)}</span>
+        </div>
+        <p className="mt-2 whitespace-pre-wrap text-[12px] font-medium leading-5 text-[var(--text)]">{record.content}</p>
+      </div>
+      <RecordInlineActions onDelete={() => onDelete(record.id)} onEdit={() => onEdit(record)} />
+    </article>
+  );
+}
+
+function JournalRecordRow({
+  record,
+  onDelete,
+  onEdit,
+}: {
+  record: RecordItem;
+  onDelete: (id: string) => void;
+  onEdit: (record: RecordItem) => void;
+}) {
+  return (
+    <article className="record-preview-item journal-preview">
+      <div className="min-w-0 flex-1">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-[13px] font-semibold text-[var(--text-strong)]">{record.title || fallbackTitle(record.type, record.content)}</div>
+            <div className="mt-0.5 text-[10px] font-bold text-[var(--text-faint)]">{record.datetime_iso || formatDisplayTimestamp(record.created_at)}</div>
+          </div>
+          <BookOpenText size={15} className="shrink-0 text-[var(--text-faint)]" />
+        </div>
+        <p className="line-clamp-5 text-[12px] font-medium leading-6 text-[var(--text)]">{record.content}</p>
+      </div>
+      <RecordInlineActions onDelete={() => onDelete(record.id)} onEdit={() => onEdit(record)} />
+    </article>
+  );
+}
+
+function RecordInlineActions({ onDelete, onEdit }: { onDelete: () => void; onEdit: () => void }) {
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <button
+        aria-label="编辑记录"
+        className="grid h-7 w-7 place-items-center rounded-[9px] text-[var(--text-muted)] transition hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]"
+        onClick={onEdit}
+        title="编辑"
+        type="button"
+      >
+        <Edit3 size={13} />
+      </button>
+      <button
+        aria-label="删除记录"
+        className="grid h-7 w-7 place-items-center rounded-[9px] text-[var(--text-muted)] transition hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+        onClick={onDelete}
+        title="删除"
+        type="button"
+      >
+        <Trash2 size={13} />
+      </button>
+    </div>
   );
 }
 
@@ -1669,23 +2049,23 @@ function RecordForm({
   onSubmit,
 }: {
   draft: RecordDraft;
-  mode: 'create' | 'edit';
+  mode: 'edit';
   onCancel: () => void;
   onChange: (draft: RecordDraft) => void;
   onSubmit: (event: FormEvent) => void;
 }) {
   return (
-    <form className="w-full max-w-[360px] rounded-[24px] border border-[#353044] bg-[#111018]/95 p-3 text-[#f8f4ed] shadow-float" onSubmit={onSubmit}>
+    <form className="w-full max-w-[360px] rounded-[18px] border border-[var(--border)] bg-[var(--surface-elevated)] p-3 text-[var(--text-strong)] shadow-float" onSubmit={onSubmit}>
       <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm font-bold text-[#f8f4ed]">
-          <span className="grid h-8 w-8 place-items-center rounded-[14px] bg-[#3a202d] text-[#ff85a1]">
-            {mode === 'create' ? <Plus size={16} /> : <Edit3 size={16} />}
+        <div className="flex items-center gap-2 text-sm font-bold text-[var(--text-strong)]">
+          <span className="grid h-8 w-8 place-items-center rounded-[10px] bg-[var(--accent-soft)] text-[var(--accent)]">
+            <Edit3 size={16} />
           </span>
-          {mode === 'create' ? '新增' : '编辑'}
+          编辑
         </div>
         <button
           aria-label="关闭表单"
-          className="grid h-8 w-8 place-items-center rounded-[14px] text-[#d8c8b8]/70 transition hover:bg-[#302a3d] hover:text-[#ff85a1]"
+          className="grid h-8 w-8 place-items-center rounded-[10px] text-[var(--text-muted)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--danger)]"
           onClick={onCancel}
           title="关闭"
           type="button"
@@ -1697,7 +2077,7 @@ function RecordForm({
       <div className="grid grid-cols-2 gap-2">
         <select
           aria-label="记录类型"
-          className="h-11 min-w-0 rounded-[18px] border border-[#3a3548] bg-[#181522] px-3 text-sm font-semibold text-[#f8f4ed] outline-none"
+          className="h-11 min-w-0 rounded-[12px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-3 text-sm font-semibold text-[var(--text-strong)] outline-none"
           onChange={(event) => onChange({ ...draft, type: event.target.value as RecordType })}
           value={draft.type}
         >
@@ -1707,11 +2087,11 @@ function RecordForm({
             </option>
           ))}
         </select>
-        <label className="flex h-11 min-w-0 items-center gap-2 rounded-[18px] border border-[#3a3548] bg-[#181522] px-3 text-[#d8c8b8]">
-          <CalendarClock size={15} className="shrink-0 text-[#d8c8b8]/60" />
+        <label className="flex h-11 min-w-0 items-center gap-2 rounded-[12px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-3 text-[var(--text-muted)]">
+          <CalendarClock size={15} className="shrink-0 text-[var(--text-faint)]" />
           <input
             aria-label="时间"
-            className="min-w-0 flex-1 border-0 bg-transparent text-sm font-semibold text-[#f8f4ed] outline-none placeholder:text-[#d8c8b8]/55"
+            className="min-w-0 flex-1 border-0 bg-transparent text-sm font-semibold text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)]"
             onChange={(event) => onChange({ ...draft, datetime: event.target.value })}
             placeholder="YYYY-MM-DD HH:mm:ss"
             value={draft.datetime}
@@ -1721,7 +2101,7 @@ function RecordForm({
 
       <input
         aria-label="标题"
-        className="mt-2 h-11 w-full rounded-[18px] border border-[#3a3548] bg-[#181522] px-3 text-sm font-semibold text-[#f8f4ed] outline-none placeholder:text-[#d8c8b8]/55"
+        className="mt-2 h-11 w-full rounded-[12px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-3 text-sm font-semibold text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)]"
         onChange={(event) => onChange({ ...draft, title: event.target.value })}
         placeholder="标题"
         value={draft.title}
@@ -1729,14 +2109,14 @@ function RecordForm({
 
       <textarea
         aria-label="内容"
-        className="mt-2 min-h-24 w-full resize-none rounded-[18px] border border-[#3a3548] bg-[#181522] px-3 py-2 text-sm font-medium leading-6 text-[#f8f4ed] outline-none placeholder:text-[#d8c8b8]/55"
+        className="mt-2 min-h-24 w-full resize-none rounded-[12px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] px-3 py-2 text-sm font-medium leading-6 text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)]"
         onChange={(event) => onChange({ ...draft, content: event.target.value })}
         placeholder="内容"
         value={draft.content}
       />
 
       <div className="mt-2 flex items-center justify-between gap-2">
-        <label className="flex h-10 flex-1 items-center gap-2 rounded-[17px] bg-[#181522] px-3 text-xs font-bold text-[#d8c8b8]">
+        <label className="flex h-10 flex-1 items-center gap-2 rounded-[12px] bg-[var(--surface-soft)] px-3 text-xs font-bold text-[var(--text-muted)]">
           <Bell size={15} />
           <span>提醒</span>
           <input
@@ -1748,7 +2128,7 @@ function RecordForm({
         </label>
         <button
           aria-label="保存记录"
-          className="flex h-10 items-center gap-1.5 rounded-[17px] bg-[#70521f] px-3 text-xs font-bold text-[#f8f4ed] shadow-pop transition hover:-translate-y-0.5 hover:bg-[#3a202d] active:translate-y-0 disabled:bg-[#2b2735] disabled:text-[#d8c8b8]/70 disabled:shadow-none"
+          className="flex h-10 items-center gap-1.5 rounded-[12px] bg-[var(--text-strong)] px-3 text-xs font-bold text-[var(--app-bg)] shadow-sm transition hover:-translate-y-0.5 hover:bg-[var(--accent-strong)] active:translate-y-0 disabled:bg-[var(--surface-soft)] disabled:text-[var(--text-muted)] disabled:shadow-none"
           disabled={!draft.content.trim()}
           type="submit"
         >
@@ -1779,15 +2159,15 @@ function RecordRow({
   const discarded = record.status === 'discarded';
 
   return (
-    <article className={`rounded-[16px] border border-[#353044] bg-[#181522] px-2.5 py-2.5 shadow-sm ${completed || discarded ? 'opacity-70' : ''}`}>
+    <article className={`rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-elevated)] px-2.5 py-2.5 shadow-sm ${completed || discarded ? 'opacity-70' : ''}`}>
       <div className="mb-1.5 flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-start gap-2">
           <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-[11px] ${meta.tone}`}>
             <Icon size={13} />
           </span>
           <div className="min-w-0">
-            <div className={`truncate text-xs font-bold text-[#f8f4ed] ${completed ? 'line-through' : ''}`}>{record.title || fallbackTitle(record.type, record.content)}</div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] font-bold text-[#d8c8b8]/65">
+            <div className={`truncate text-xs font-bold text-[var(--text-strong)] ${completed ? 'line-through' : ''}`}>{record.title || fallbackTitle(record.type, record.content)}</div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] font-bold text-[var(--text-muted)]">
               <span>{typeLabel[record.type]}</span>
               {record.datetime_iso ? (
                 <>
@@ -1806,7 +2186,7 @@ function RecordRow({
             <button
               aria-label={completed ? '恢复待办' : '完成待办'}
               className={`grid h-6 w-6 place-items-center rounded-[10px] transition ${
-                completed ? 'bg-[#14342a] text-[#7ee0a0]' : 'text-[#d8c8b8]/70 hover:bg-[#14342a] hover:text-[#7ee0a0]'
+                completed ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'text-[var(--text-muted)] hover:bg-[var(--success-soft)] hover:text-[var(--success)]'
               }`}
               onClick={() => onToggleDone(record)}
               title={completed ? '恢复' : '完成'}
@@ -1818,7 +2198,7 @@ function RecordRow({
           {discarded ? (
             <button
               aria-label="恢复记录"
-              className="grid h-6 w-6 place-items-center rounded-[10px] text-[#d8c8b8]/70 transition hover:bg-[#14342a] hover:text-[#7ee0a0]"
+              className="grid h-6 w-6 place-items-center rounded-[9px] text-[var(--text-muted)] transition hover:bg-[var(--success-soft)] hover:text-[var(--success)]"
               onClick={() => onRestore(record.id)}
               title="恢复"
               type="button"
@@ -1829,7 +2209,7 @@ function RecordRow({
             <>
               <button
                 aria-label="编辑记录"
-                className="grid h-6 w-6 place-items-center rounded-[10px] text-[#d8c8b8]/70 transition hover:bg-[#292242] hover:text-[#c8b6ff]"
+                className="grid h-6 w-6 place-items-center rounded-[9px] text-[var(--text-muted)] transition hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]"
                 onClick={() => onEdit(record)}
                 title="编辑"
                 type="button"
@@ -1838,7 +2218,7 @@ function RecordRow({
               </button>
               <button
                 aria-label="删除记录"
-                className="grid h-6 w-6 place-items-center rounded-[10px] text-[#d8c8b8]/70 transition hover:bg-[#3b1728] hover:text-[#ff85a1]"
+                className="grid h-6 w-6 place-items-center rounded-[9px] text-[var(--text-muted)] transition hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
                 onClick={() => onDelete(record.id)}
                 title="删除"
                 type="button"
@@ -1849,20 +2229,20 @@ function RecordRow({
           )}
         </div>
       </div>
-      <p className="line-clamp-2 rounded-[12px] bg-[#111018] px-2 py-1.5 text-[11px] font-medium leading-4 text-[#d8c8b8]">{record.content}</p>
-      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] font-bold text-[#d8c8b8]/65">
+      <p className="line-clamp-2 rounded-[10px] bg-[var(--surface-soft)] px-2 py-1.5 text-[11px] font-medium leading-4 text-[var(--text)]">{record.content}</p>
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] font-bold text-[var(--text-muted)]">
         <span className="inline-flex items-center gap-1">
           <FileText size={10} />
           {formatDisplayTimestamp(record.updated_at)}
         </span>
         {record.need_reminder ? (
-          <span className="inline-flex items-center gap-1 text-[#ff85a1]">
+          <span className="inline-flex items-center gap-1 text-[var(--danger)]">
             <Bell size={10} />
             提醒
           </span>
         ) : null}
         {discarded ? (
-          <span className="inline-flex items-center gap-1 text-[#ff85a1]">
+          <span className="inline-flex items-center gap-1 text-[var(--danger)]">
             <Trash2 size={10} />
             回收站
           </span>
@@ -1872,21 +2252,14 @@ function RecordRow({
   );
 }
 
-function EmptyRecords({ onCreate }: { onCreate: () => void }) {
+function EmptyRecords() {
   return (
-    <div className="rounded-[24px] border border-dashed border-[#353044] bg-[#181522] p-5 text-center">
-      <div className="mx-auto grid h-12 w-12 place-items-center rounded-[20px] bg-[#14342a] text-[#7ee0a0]">
+    <div className="rounded-[18px] border border-dashed border-[var(--border-subtle)] bg-[var(--surface-soft)] p-5 text-center">
+      <div className="mx-auto grid h-12 w-12 place-items-center rounded-[16px] bg-[var(--success-soft)] text-[var(--success)]">
         <ListChecks size={20} />
       </div>
-      <div className="mt-3 text-sm font-bold text-[#f8f4ed]">暂无记录</div>
-      <button
-        className="mx-auto mt-3 flex h-10 items-center gap-1.5 rounded-[17px] bg-[#242032] px-3 text-xs font-bold text-[#d8c8b8] shadow-sm transition hover:-translate-y-0.5 hover:text-[#ff85a1] active:translate-y-0"
-        onClick={onCreate}
-        type="button"
-      >
-        <Plus size={15} />
-        新增
-      </button>
+      <div className="mt-3 text-sm font-bold text-[var(--text-strong)]">暂无记录</div>
+      <div className="mt-1 text-xs font-medium text-[var(--text-muted)]">和 Vimo 说一声，记录会自动生成。</div>
     </div>
   );
 }
@@ -1903,9 +2276,9 @@ function ThinkingBubble() {
 
 function ErrorPill({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex items-center justify-between gap-2 rounded-[20px] border border-berry/20 bg-berry-soft px-3 py-2 text-sm text-berry">
+    <div className="flex items-center justify-between gap-2 rounded-[16px] border border-[var(--border-subtle)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">
       <span className="min-w-0 truncate">{message}</span>
-      <button aria-label="重试" className="grid h-8 w-8 shrink-0 place-items-center rounded-[15px] bg-[#242032]" onClick={onRetry} type="button">
+      <button aria-label="重试" className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px] bg-[var(--surface-soft)]" onClick={onRetry} type="button">
         <RefreshCw size={15} />
       </button>
     </div>
@@ -1914,20 +2287,20 @@ function ErrorPill({ message, onRetry }: { message: string; onRetry: () => void 
 
 function NoticeMessage({ content }: { content: string }) {
   return (
-    <div className="flex items-center gap-3 py-1.5 text-[#d8c8b8]/54" role="status" aria-live="polite">
-      <div className="h-px flex-1 bg-[#353044]/72" />
+    <div className="flex items-center gap-3 py-1.5 text-[var(--text-muted)]" role="status" aria-live="polite">
+      <div className="h-px flex-1 bg-[var(--border-subtle)]" />
       <div className="flex max-w-[72%] items-center gap-1.5 text-center text-[12px] font-semibold leading-5">
-        <Info className="shrink-0 text-[#d8c8b8]/48" size={14} />
+        <Info className="shrink-0 text-[var(--text-faint)]" size={14} />
         <span className="min-w-0 whitespace-normal break-words">{content}</span>
       </div>
-      <div className="h-px flex-1 bg-[#353044]/72" />
+      <div className="h-px flex-1 bg-[var(--border-subtle)]" />
     </div>
   );
 }
 
 function Toast({ message }: { message: string }) {
   return (
-    <div className="pointer-events-none absolute left-1/2 top-5 z-30 -translate-x-1/2 rounded-full bg-[#242032]/90 px-4 py-2 text-sm font-semibold text-[#f8f4ed] shadow-float backdrop-blur">
+    <div className="pointer-events-none absolute left-1/2 top-5 z-30 -translate-x-1/2 rounded-full bg-[var(--surface-elevated)] px-4 py-2 text-sm font-semibold text-[var(--text-strong)] shadow-float backdrop-blur">
       {message}
     </div>
   );
@@ -1950,6 +2323,10 @@ function countByTab(records: RecordItem[], tab: RecordTab) {
   return records.filter((record) => record.status !== 'discarded' && record.type === tab).length;
 }
 
+function isScheduledTodo(record: RecordItem) {
+  return record.status !== 'discarded' && record.type === 'todo' && (record.need_reminder || Boolean(record.datetime_iso));
+}
+
 function createEmptyDraft(type: RecordType = 'todo'): RecordDraft {
   return {
     type,
@@ -1969,23 +2346,6 @@ function draftFromRecord(record: RecordItem): RecordDraft {
     datetime: record.datetime_iso ?? record.datetime_text ?? '',
     need_reminder: record.need_reminder,
     status: record.status,
-  };
-}
-
-function recordInputFromDraft(draft: RecordDraft): RecordWriteInput {
-  const datetime = normalizeText(draft.datetime);
-  return {
-    type: draft.type,
-    title: normalizeText(draft.title) ?? fallbackTitle(draft.type, draft.content),
-    content: draft.content.trim(),
-    datetime_text: null,
-    datetime_iso: datetime,
-    need_reminder: draft.need_reminder,
-    confidence: 1,
-    status: draft.status,
-    missing_fields: [],
-    deleted_at: draft.status === 'discarded' ? formatLocalTimestamp() : null,
-    previous_status: draft.status === 'discarded' ? 'saved' : null,
   };
 }
 
@@ -2290,7 +2650,48 @@ function replyProfileFromSettings(settings: AgentSettings): ReplyProfile {
   };
 }
 
-export function sanitizeSettingsPatch(patch: SettingsPatch, modelOptions: AgentModelOption[]): SettingsPatch | null {
+function thinkingRequestForSettings(settings: AgentSettings, modelOptions: AgentModelOption[], customModels: CustomAgentModel[]) {
+  const modelKey = selectedModelKey(settings);
+  if (!settings.thinking_enabled || !modelKey || !modelSupportsThinking(modelKey, modelOptions, customModels)) {
+    return undefined;
+  }
+  return { enabled: true };
+}
+
+function modelSupportsThinking(modelKey: string | undefined, modelOptions: AgentModelOption[], customModels: CustomAgentModel[]) {
+  const key = modelKey?.trim();
+  if (!key) {
+    return false;
+  }
+  const builtIn = modelOptions.find((model) => model.key === key);
+  if (builtIn) {
+    return Boolean(builtIn.supports_thinking);
+  }
+  const custom = customModels.find((model) => model.key === key);
+  return Boolean(custom?.supports_thinking);
+}
+
+function customModelForRequest(settings: AgentSettings, customModels: CustomAgentModel[]) {
+  const key = selectedModelKey(settings);
+  if (!key) {
+    return undefined;
+  }
+  return customModels.find((model) => model.key === key);
+}
+
+function combineAgentModels(modelOptions: AgentModelOption[], customModels: CustomAgentModel[]): AgentModelOption[] {
+  const custom = customModels.map((model) => ({
+    key: model.key,
+    label: model.label || model.model,
+    description: model.description || model.api_url,
+    model: model.model,
+    default: false,
+    supports_thinking: Boolean(model.supports_thinking),
+  }));
+  return [...modelOptions.map((model) => ({ ...model })), ...custom];
+}
+
+export function sanitizeSettingsPatch(patch: SettingsPatch, modelOptions: AgentModelOption[], customModels: CustomAgentModel[] = []): SettingsPatch | null {
   const next: SettingsPatch = {};
   if (patch.preset !== undefined) {
     next.preset = patch.preset;
@@ -2303,7 +2704,7 @@ export function sanitizeSettingsPatch(patch: SettingsPatch, modelOptions: AgentM
   }
   if (patch.model_key !== undefined) {
     const modelKey = patch.model_key.trim();
-    const allowedModelKeys = new Set(modelOptions.map((model) => model.key));
+    const allowedModelKeys = new Set([...modelOptions.map((model) => model.key), ...customModels.map((model) => model.key)]);
     if (!modelKey || !allowedModelKeys.has(modelKey)) {
       return Object.keys(next).length > 0 ? next : null;
     }
@@ -2315,6 +2716,10 @@ export function sanitizeSettingsPatch(patch: SettingsPatch, modelOptions: AgentM
 function selectedModelKey(settings: AgentSettings) {
   const modelKey = settings.model_key?.trim();
   return modelKey || undefined;
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError';
 }
 
 function shouldShowPreview(preview: RecordPreview) {
@@ -2738,6 +3143,7 @@ function normalizeStoredMessage(value: unknown): Message | null {
     intent: isAgentIntent(item.intent) ? item.intent : undefined,
     pendingId: typeof item.pendingId === 'string' ? item.pendingId : undefined,
     preview: item.preview ? normalizePreview(item.preview) : undefined,
+    thinking: normalizeThinkingPayload(item.thinking),
   };
 }
 
@@ -2990,6 +3396,59 @@ function writeAgentSettings(settings: AgentSettings) {
   }
 }
 
+function readCustomModels(): CustomAgentModel[] {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(customModelsKey);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.map(normalizeCustomModel).filter((model): model is CustomAgentModel => Boolean(model)).slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
+function writeCustomModels(models: CustomAgentModel[]) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(customModelsKey, JSON.stringify(models.slice(0, 20)));
+  } catch {
+    // Custom models are browser-local and best effort.
+  }
+}
+
+function normalizeCustomModel(value: unknown): CustomAgentModel | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const source = value as Partial<Record<keyof CustomAgentModel, unknown>>;
+  const key = typeof source.key === 'string' ? source.key.trim() : '';
+  const model = typeof source.model === 'string' ? source.model.trim() : '';
+  const apiURL = typeof source.api_url === 'string' ? source.api_url.trim() : '';
+  if (!key || !model || !apiURL) {
+    return null;
+  }
+  return {
+    key,
+    label: typeof source.label === 'string' && source.label.trim() ? source.label.trim() : model,
+    description: typeof source.description === 'string' ? source.description.trim() : apiURL,
+    api_url: apiURL,
+    api_key: typeof source.api_key === 'string' ? source.api_key : '',
+    model,
+    timeout_seconds: typeof source.timeout_seconds === 'number' && source.timeout_seconds > 0 ? Math.floor(source.timeout_seconds) : 120,
+    supports_thinking: Boolean(source.supports_thinking),
+  };
+}
+
 function readRiskFeedback(): RiskFeedbackState {
   if (typeof window === 'undefined') {
     return emptyRiskFeedback;
@@ -3046,6 +3505,23 @@ function normalizeAgentSettings(value: Partial<AgentSettings>): AgentSettings {
     custom_style: typeof value.custom_style === 'string' ? value.custom_style : '',
     nickname: typeof value.nickname === 'string' ? value.nickname : '',
     model_key: typeof value.model_key === 'string' && value.model_key.trim() ? value.model_key : defaultSettings.model_key,
+    thinking_enabled: Boolean(value.thinking_enabled),
+  };
+}
+
+function normalizeThinkingPayload(value: unknown): ThinkingPayload | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const source = value as Partial<Record<keyof ThinkingPayload, unknown>>;
+  const fast = typeof source.fast === 'string' ? source.fast.trim() : '';
+  const slow = typeof source.slow === 'string' ? source.slow.trim() : '';
+  if (!fast && !slow) {
+    return null;
+  }
+  return {
+    ...(fast ? { fast } : {}),
+    ...(slow ? { slow } : {}),
   };
 }
 

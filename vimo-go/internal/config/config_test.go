@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestLoadDatabaseConfigDefaultsToMemoryEvenWithMySQLDSN(t *testing.T) {
 	t.Setenv("DB_DRIVER", "")
@@ -73,4 +76,35 @@ func TestEnvSecurityOverrides(t *testing.T) {
 	if len(cfg.AllowedOrigins) != 2 || cfg.AllowedOrigins[0] != "https://app.example.com" {
 		t.Fatalf("AllowedOrigins = %#v", cfg.AllowedOrigins)
 	}
+}
+
+func TestLoadModelConfigReadsSupportsThinking(t *testing.T) {
+	path := writeTempFile(t, `active_provider: thinker
+
+providers:
+  thinker:
+    type: openai_compatible
+    label: Thinker
+    description: Reasoning model
+    supports_thinking: true
+    base_url: http://127.0.0.1:8001
+    chat_model: thinker
+`)
+
+	cfg, err := LoadModelConfig(path)
+	if err != nil {
+		t.Fatalf("LoadModelConfig() error = %v", err)
+	}
+	if !cfg.Providers["thinker"].SupportsThinking {
+		t.Fatal("SupportsThinking = false, want true")
+	}
+}
+
+func writeTempFile(t *testing.T, content string) string {
+	t.Helper()
+	path := t.TempDir() + "/models.yaml"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	return path
 }

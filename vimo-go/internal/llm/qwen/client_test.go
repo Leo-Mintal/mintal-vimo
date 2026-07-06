@@ -118,6 +118,42 @@ func TestChatSendsResponseFormat(t *testing.T) {
 	}
 }
 
+func TestChatSendsThinkingAndReadsReasoning(t *testing.T) {
+	var enableThinking any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("path = %s, want /v1/chat/completions", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		enableThinking = body["enable_thinking"]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"text\":\"你好\",\"route\":\"chat_only\"}","reasoning_content":"先判断这是闲聊。"}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(config.ProviderConfig{
+		BaseURL:   server.URL,
+		ChatModel: "test-model",
+	})
+	resp, err := client.Chat(context.Background(), llm.ChatRequest{
+		Messages: []llm.Message{{Role: "user", Content: "hello"}},
+		Thinking: &llm.ThinkingOptions{Enabled: true},
+	})
+
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if enableThinking != true {
+		t.Fatalf("enable_thinking = %#v, want true", enableThinking)
+	}
+	if resp.Reasoning != "先判断这是闲聊。" {
+		t.Fatalf("Reasoning = %q, want provider reasoning", resp.Reasoning)
+	}
+}
+
 func TestChatErrorDoesNotExposeResponseBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

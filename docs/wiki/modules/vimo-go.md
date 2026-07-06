@@ -39,8 +39,12 @@
 - `vimo-go/internal/llm/qwen.Client` 调用 OpenAI Compatible `/v1/chat/completions`，`base_url` 可配置为服务根地址或已经包含 `/v1` 的 OpenAI 标准地址；快路协议请求使用非流式 JSON mode，用户可见的逐字效果由后端解析完整 `text` 后通过业务 SSE 发送给前端。
 - 未加载模型配置文件时，Qwen fallback 默认地址使用本机 `http://127.0.0.1:8001`；真实内网模型网关应通过未提交的本地 env 覆盖。
 - `vimo-go/internal/agent.ModelRegistry` 根据 `vimo-go/configs/models.yaml` 注册多个模型 provider。
-- `vimo-go/internal/agent.Service` 不直接依赖模型地址或模型 ID；每次 `POST /api/agent/messages` 可通过 `model_key` 选择模型。
-- `POST /api/agent/fast-reply/stream` 是独立快路 SSE 接口，只读取当前输入、上下文、模型选择、`turn_id` 和 `reply_profile` 生成即时承接文本，不执行任何记录动作。后端用 OpenAI Compatible `response_format={"type":"json_object"}` 非流式请求快路模型拿到完整 `text/route`，只把解析后的 `text` 作为 `fast_delta` 展示给用户，并在 `fast_done.route` 中输出 `continue_slow` 或 `chat_only`。如果模型把协议 JSON 误放进 `text` 字段，后端只做协议解包；坏 JSON 会报错，不把半截 JSON 发到 UI。
+- `vimo-go/internal/agent.Service` 不直接依赖固定模型地址或模型 ID；每次 `POST /api/agent/messages` 和 `POST /api/agent/fast-reply/stream` 可通过 `model_key` 选择模型。
+- Agent 请求支持可选 `custom_model`，用于本轮临时构造 OpenAI-compatible provider；后端只校验并使用 `key`、`api_url/base_url`、`api_key`、`model`、`timeout_seconds` 和 `supports_thinking` 调用模型，不持久化该配置，也不把 API key 写入 prompt payload。
+- `custom_model.key` 必须与本轮 `model_key` 匹配才会被使用；快路会优先尝试自定义模型，失败后仍可按原有候选顺序尝试服务端默认/内置模型。
+- 模型配置可声明 `supports_thinking: true`；只有当前模型或自定义模型声明支持且请求包含 `thinking.enabled=true` 时，`vimo-go/internal/llm/qwen.Client` 才会向 OpenAI-compatible 请求体写入 `enable_thinking: true`。
+- OpenAI-compatible 响应会兼容读取 `reasoning_content`、`reasoning` 或 `reasoning_text` 作为 reasoning。`POST /api/agent/messages` 会在响应 `thinking.slow` 和 `record_preview.reasoning` 中带回；快路 SSE 会在 provider 返回 reasoning 时发送 `fast_thinking` 事件。
+- `POST /api/agent/fast-reply/stream` 是独立快路 SSE 接口，只读取当前输入、上下文、模型选择、`turn_id` 和 `reply_profile` 生成即时承接文本，不执行任何记录动作。后端用 OpenAI Compatible `response_format={"type":"json_object"}` 非流式请求快路模型拿到完整 `text/route`，只把解析后的 `text` 作为 `fast_delta` 展示给用户，并在 `fast_done.route` 中输出 `continue_slow` 或 `chat_only`。如果模型把协议 JSON 误放进 `text` 字段，后端只做协议解包；坏 JSON 会报错，不把半截 JSON 发到 UI。快路不是 provider 流式 reasoning；思考模式开启后只能在完整快路响应返回时一次性暴露 provider 返回的 reasoning。
 - `POST /api/agent/messages` 是慢路执行接口，负责完整 `Analyze`、意图栈、风险门控和 `record_preview`；前端会与快路接口并行调用，并把同一 `turn_id` 下已展示的快路文本作为 `fast_reply_context` 带入慢路。
 - `POST /api/agent/messages/stream` 保留兼容式 SSE：请求进入后并行启动快路 `StreamFastReply` 和慢路 `Analyze`；事件仍保证先发快路 `fast_delta/fast_done`。如果 `fast_done.route=chat_only`，接口直接 `done`，不再等待慢路结果；否则继续发送慢路 `final/done`。`final` 的 payload 与旧 `/api/agent/messages` 兼容，包含 assistant message 和 `record_preview`。
 - 快路 prompt 位于 `vimo-go/prompts/agent/fast-reply/`，输出完整 JSON object：`text` 是用户可见回复，`route=chat_only` 只用于纯寒暄、普通闲聊、轻问题或不需要结构化处理的自然回应；`chat_only` 的 `text` 必须能作为最终回答成立，不能写成“我先想一下/我来处理”的慢路占位。重复或高度近似的普通闲聊问题应结合 `recent_messages` 承认已经答过并保持同一立场。所有记录、提醒、查询、修改删除、配置、未收口上下文接续或不确定场景都必须 `continue_slow`。快路协议 JSON 不走模型流式输出，避免半截 JSON 泄漏到 UI。
@@ -51,6 +55,7 @@
 - 两个 prompt loader 都会把 `vimo-go/prompts/skills/always/*.md` 插入到 Agent role 片段之后、任务 prompt 片段之前；当前 `00-shuorenhua-natural-language.md` 用于统一快路、慢路 `reply` 和可沉淀 `title/content` 的中文自然表达约束。
 - `vimo-go/prompts/skills/library/` 保存运行时 skills 的项目内来源和扩展参考，不会自动拼进模型上下文。
 - 如果模型需要未加载的 runtime skill，应输出结构化 skill need/request，由后端 skill registry 决定是否加载、安装、创建或要求用户授权；模型本身不能自行下载或创建可执行 skill。
+- Runtime skills 自主选择与安全启用的未来方案沉淀在 `docs/wiki/runtime-skills-autonomy-plan.md`；当前代码仍只固定加载 `skills/always/*.md`，没有动态 registry 或 Safety Gate。
 - `vimo-go/prompts/agent/analyze/05-intention-engine.md` 是固定加载的意图分析前置 skill，位于 Role 和 Output Schema 之间，后续记录解析依赖其意图判断。
 - Agent analyze prompt 使用按文件名前缀排序的模块化片段；新增规则时优先保持单一职责，避免重复展开。
 - `vimo-go/prompts/agent/analyze/15-context-rules.md` 只保留上下文字段、待确认合并和回复风格等必要补充，避免与 `Intention Engine` 重复。

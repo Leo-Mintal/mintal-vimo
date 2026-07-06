@@ -39,11 +39,12 @@ func NewModelRegistry(modelConfig config.ModelConfig) (*ModelRegistry, error) {
 			label = key
 		}
 		options = append(options, ModelOption{
-			Key:         key,
-			Label:       label,
-			Description: strings.TrimSpace(providerConfig.Description),
-			Model:       providerConfig.ChatModel,
-			Default:     key == modelConfig.ActiveProvider,
+			Key:              key,
+			Label:            label,
+			Description:      strings.TrimSpace(providerConfig.Description),
+			Model:            providerConfig.ChatModel,
+			Default:          key == modelConfig.ActiveProvider,
+			SupportsThinking: providerConfig.SupportsThinking,
 		})
 		providers[key] = qwen.NewClient(providerConfig)
 	}

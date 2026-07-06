@@ -32,11 +32,11 @@ const typeOptions: Array<{ value: RecordType; label: string }> = [
 ];
 
 const typeMeta = {
-  todo: { label: '待办', icon: ClipboardList, tone: 'bg-[#14342a] text-[#7ee0a0]' },
-  journal: { label: '日记', icon: BookOpenText, tone: 'bg-[#123040] text-[#8bd8ff]' },
-  memo: { label: '备忘', icon: StickyNote, tone: 'bg-[#3a202d] text-[#ff85a1]' },
-  idea: { label: '想法', icon: Lightbulb, tone: 'bg-[#292242] text-[#c8b6ff]' },
-  unknown: { label: '确认', icon: Sparkles, tone: 'bg-[#70521f] text-[#f8f4ed]' },
+  todo: { label: '待办', icon: ClipboardList, tone: 'bg-[var(--success-soft)] text-[var(--success)]' },
+  journal: { label: '日记', icon: BookOpenText, tone: 'bg-[var(--accent-soft)] text-[var(--accent)]' },
+  memo: { label: '备忘', icon: StickyNote, tone: 'bg-[var(--danger-soft)] text-[var(--danger)]' },
+  idea: { label: '想法', icon: Lightbulb, tone: 'bg-[var(--warning-soft)] text-[var(--warning)]' },
+  unknown: { label: '确认', icon: Sparkles, tone: 'bg-[var(--warning-soft)] text-[var(--warning)]' },
 } satisfies Record<RecordType, { label: string; icon: typeof ClipboardList; tone: string }>;
 
 export function RecordCard({ preview, onDiscard, onSave }: RecordCardProps) {
@@ -65,23 +65,23 @@ export function RecordCard({ preview, onDiscard, onSave }: RecordCardProps) {
   }
 
   return (
-    <section className={`rounded-[16px] border ${isDeleteAction ? 'border-[#6f3543] bg-[#1b1219]' : 'border-[#353044] bg-[#181522]'} p-2.5 text-[#f8f4ed] shadow-sm backdrop-blur`}>
+    <section className={`rounded-[16px] border ${isDeleteAction ? 'border-[var(--danger)] bg-[var(--danger-soft)]' : 'border-[var(--border-subtle)] bg-[var(--surface-elevated)]'} p-2.5 text-[var(--text-strong)] shadow-sm backdrop-blur`}>
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-start gap-2">
-          <div className={`grid h-8 w-8 shrink-0 place-items-center rounded-[12px] ${isDeleteAction ? 'bg-[#3b1728] text-[#ff85a1]' : meta.tone}`}>
+          <div className={`grid h-8 w-8 shrink-0 place-items-center rounded-[12px] ${isDeleteAction ? 'bg-[var(--danger-soft)] text-[var(--danger)]' : meta.tone}`}>
             <TypeIcon size={14} />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className="rounded-full bg-[#111018] px-1.5 py-0.5 text-[10px] font-bold text-[#d8c8b8]">{isDeleteAction ? '删除确认' : meta.label}</span>
-              <span className="rounded-full bg-[#14342a] px-1.5 py-0.5 text-[10px] font-bold text-[#7ee0a0]">{confidence}%</span>
+              <span className="rounded-full bg-[var(--surface-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-muted)]">{isDeleteAction ? '删除确认' : meta.label}</span>
+              <span className="rounded-full bg-[var(--success-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--success)]">{confidence}%</span>
             </div>
-            <h2 className="mt-0.5 truncate text-sm font-semibold leading-5 text-[#f8f4ed]">{draft.title || '未命名记录'}</h2>
+            <h2 className="mt-0.5 truncate text-sm font-semibold leading-5 text-[var(--text-strong)]">{draft.title || '未命名记录'}</h2>
           </div>
         </div>
         <div
           className={`grid h-8 w-8 shrink-0 place-items-center rounded-[12px] ${
-            isDeleteAction ? 'bg-[#3b1728] text-[#ff85a1]' : draft.status === 'ready' ? 'bg-[#14342a] text-[#7ee0a0]' : 'bg-[#70521f] text-[#f8f4ed]'
+            isDeleteAction ? 'bg-[var(--danger-soft)] text-[var(--danger)]' : draft.status === 'ready' ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--warning-soft)] text-[var(--warning)]'
           }`}
           title={isDeleteAction ? '将移入回收站' : draft.status === 'ready' ? '可保存' : '待确认'}
         >
@@ -94,7 +94,7 @@ export function RecordCard({ preview, onDiscard, onSave }: RecordCardProps) {
           {riskSummary.map((item) => (
             <span
               className={`rounded-full px-2 py-1 text-[10px] font-bold ${
-                item.level === 'high' ? 'bg-[#70521f] text-[#f8f4ed]' : 'bg-[#242032] text-[#d8c8b8]'
+                item.level === 'high' ? 'bg-[var(--warning-soft)] text-[var(--warning)]' : 'bg-[var(--surface-soft)] text-[var(--text-muted)]'
               }`}
               key={item.field}
               title={`${item.label} ${Math.round(item.confidence * 100)}%`}
@@ -105,13 +105,13 @@ export function RecordCard({ preview, onDiscard, onSave }: RecordCardProps) {
         </div>
       ) : null}
 
-      <div className="mb-2 rounded-[14px] border border-[#353044] bg-[#111018] p-2">
-        <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-[#d8c8b8]">
+      <div className="mb-2 rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] p-2">
+        <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-[var(--text-muted)]">
           <span>识别完整度</span>
           <span>{readyCount}/{dataPoints.length}</span>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-[#242032]">
-          <div className="h-full rounded-full bg-gradient-to-r from-[#7ee0a0] via-[#8bd8ff] to-[#c8b6ff]" style={{ width: `${confidence}%` }} />
+        <div className="h-1.5 overflow-hidden rounded-full bg-[var(--surface-soft)]">
+          <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${confidence}%` }} />
         </div>
         <div className="mt-1.5 grid grid-cols-2 gap-1.5">
           {dataPoints.map((point) => (
@@ -121,23 +121,23 @@ export function RecordCard({ preview, onDiscard, onSave }: RecordCardProps) {
       </div>
 
       {isDeleteAction ? (
-        <div className="space-y-2 rounded-[14px] border border-[#6f3543] bg-[#111018] p-2 text-xs leading-5 text-[#d8c8b8]">
-          <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#ff85a1]">
+        <div className="space-y-2 rounded-[14px] border border-[var(--danger)] bg-[var(--surface-soft)] p-2 text-xs leading-5 text-[var(--text-muted)]">
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--danger)]">
             <Trash2 size={13} />
             将移入回收站，可在回收站恢复
           </div>
-          <p className="line-clamp-3 rounded-[12px] bg-[#1b1219] px-2.5 py-1.5 text-[#f8f4ed]">{draft.content}</p>
+          <p className="line-clamp-3 rounded-[12px] bg-[var(--surface-elevated)] px-2.5 py-1.5 text-[var(--text-strong)]">{draft.content}</p>
           <div className="flex flex-wrap gap-1.5">
             <Info icon={<CalendarClock size={12} />} value={draft.datetime_iso ?? draft.datetime_text ?? '无'} />
             <Info icon={<Bell size={12} />} value={draft.need_reminder ? '提醒开' : '提醒关'} />
           </div>
         </div>
       ) : editing ? (
-        <div className="grid gap-1.5 rounded-[14px] border border-[#353044] bg-[#111018] p-2 sm:grid-cols-2">
-          <label className="block text-[11px] font-bold text-[#d8c8b8]/75">
+        <div className="grid gap-1.5 rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] p-2 sm:grid-cols-2">
+          <label className="block text-[11px] font-bold text-[var(--text-muted)]">
             <select
               aria-label="类型"
-              className="mt-1 h-8 w-full rounded-[12px] border border-[#3a3548] bg-[#181522] px-2 text-xs text-[#f8f4ed]"
+              className="mt-1 h-8 w-full rounded-[12px] border border-[var(--border-subtle)] bg-[var(--surface-elevated)] px-2 text-xs text-[var(--text-strong)]"
               onChange={(event) => setDraft({ ...draft, type: event.target.value as RecordType })}
               value={draft.type}
             >
@@ -148,28 +148,28 @@ export function RecordCard({ preview, onDiscard, onSave }: RecordCardProps) {
               ))}
             </select>
           </label>
-          <label className="block text-[11px] font-bold text-[#d8c8b8]/75">
+          <label className="block text-[11px] font-bold text-[var(--text-muted)]">
             <input
               aria-label="标题"
-              className="mt-1 h-8 w-full rounded-[12px] border border-[#3a3548] bg-[#181522] px-2 text-xs text-[#f8f4ed]"
+              className="mt-1 h-8 w-full rounded-[12px] border border-[var(--border-subtle)] bg-[var(--surface-elevated)] px-2 text-xs text-[var(--text-strong)]"
               onChange={(event) => setDraft({ ...draft, title: event.target.value })}
               placeholder="标题"
               value={draft.title}
             />
           </label>
-          <label className="block text-[11px] font-bold text-[#d8c8b8]/75 sm:col-span-2">
+          <label className="block text-[11px] font-bold text-[var(--text-muted)] sm:col-span-2">
             <textarea
               aria-label="内容"
-              className="mt-1 min-h-12 w-full resize-none rounded-[12px] border border-[#3a3548] bg-[#181522] px-2 py-1.5 text-xs leading-5 text-[#f8f4ed]"
+              className="mt-1 min-h-12 w-full resize-none rounded-[12px] border border-[var(--border-subtle)] bg-[var(--surface-elevated)] px-2 py-1.5 text-xs leading-5 text-[var(--text-strong)]"
               onChange={(event) => setDraft({ ...draft, content: event.target.value })}
               placeholder="内容"
               value={draft.content}
             />
           </label>
-          <label className="block text-[11px] font-bold text-[#d8c8b8]/75">
+          <label className="block text-[11px] font-bold text-[var(--text-muted)]">
             <input
               aria-label="时间"
-              className="mt-1 h-8 w-full rounded-[12px] border border-[#3a3548] bg-[#181522] px-2 text-xs text-[#f8f4ed]"
+              className="mt-1 h-8 w-full rounded-[12px] border border-[var(--border-subtle)] bg-[var(--surface-elevated)] px-2 text-xs text-[var(--text-strong)]"
               onChange={(event) =>
                 setDraft({
                   ...draft,
@@ -181,7 +181,7 @@ export function RecordCard({ preview, onDiscard, onSave }: RecordCardProps) {
               value={draft.datetime_iso ?? ''}
             />
           </label>
-          <label className="flex min-h-8 items-center justify-between rounded-[12px] bg-[#181522] px-2 text-xs font-semibold text-[#d8c8b8]">
+          <label className="flex min-h-8 items-center justify-between rounded-[12px] bg-[var(--surface-elevated)] px-2 text-xs font-semibold text-[var(--text-muted)]">
             <span className="flex items-center gap-1.5">
               <Bell size={13} />
               提醒
@@ -195,8 +195,8 @@ export function RecordCard({ preview, onDiscard, onSave }: RecordCardProps) {
           </label>
         </div>
       ) : (
-        <div className="space-y-2 text-xs leading-5 text-[#d8c8b8]">
-          <p className="line-clamp-3 rounded-[14px] bg-[#111018] px-2.5 py-1.5">{draft.content}</p>
+        <div className="space-y-2 text-xs leading-5 text-[var(--text-muted)]">
+          <p className="line-clamp-3 rounded-[14px] bg-[var(--surface-soft)] px-2.5 py-1.5">{draft.content}</p>
           <div className="flex flex-wrap gap-1.5">
             <Info icon={<CalendarClock size={12} />} value={draft.datetime_iso ?? draft.datetime_text ?? '无'} />
             <Info icon={<Bell size={12} />} value={draft.need_reminder ? '开' : '关'} />
@@ -208,8 +208,8 @@ export function RecordCard({ preview, onDiscard, onSave }: RecordCardProps) {
       <div className="mt-2.5 flex gap-1.5">
         <button
           aria-label={isDeleteAction ? '确认删除' : '保存'}
-          className={`flex h-9 flex-1 items-center justify-center gap-1.5 rounded-[13px] px-2 text-xs font-bold text-[#f8f4ed] shadow-pop transition hover:-translate-y-0.5 active:translate-y-0 disabled:bg-[#2b2735] disabled:text-[#d8c8b8]/70 disabled:shadow-none ${
-            isDeleteAction ? 'bg-[#3b1728] hover:bg-[#6f3543]' : 'bg-[#70521f] hover:bg-[#3a202d]'
+          className={`flex h-9 flex-1 items-center justify-center gap-1.5 rounded-[13px] px-2 text-xs font-bold shadow-pop transition hover:-translate-y-0.5 active:translate-y-0 disabled:bg-[var(--surface-soft)] disabled:text-[var(--text-muted)] disabled:shadow-none ${
+            isDeleteAction ? 'bg-[var(--danger-soft)] text-[var(--danger)] hover:bg-[var(--surface-hover)]' : 'bg-[var(--text-strong)] text-[var(--app-bg)] hover:bg-[var(--accent-strong)]'
           }`}
           disabled={saving}
           onClick={save}
@@ -221,7 +221,7 @@ export function RecordCard({ preview, onDiscard, onSave }: RecordCardProps) {
         {!isDeleteAction ? (
           <button
             aria-label={editing ? '完成编辑' : '编辑'}
-            className="grid h-9 w-9 place-items-center rounded-[13px] border border-[#353044] bg-[#242032] text-[#d8c8b8] transition hover:-translate-y-0.5 hover:text-[#7ee0a0] active:translate-y-0"
+            className="grid h-9 w-9 place-items-center rounded-[13px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] text-[var(--text-muted)] transition hover:-translate-y-0.5 hover:text-[var(--success)] active:translate-y-0"
             onClick={() => setEditing(!editing)}
             title={editing ? '完成编辑' : '编辑'}
             type="button"
@@ -231,7 +231,7 @@ export function RecordCard({ preview, onDiscard, onSave }: RecordCardProps) {
         ) : null}
         <button
           aria-label="丢弃"
-          className="grid h-9 w-9 place-items-center rounded-[13px] border border-[#353044] bg-[#242032] text-[#d8c8b8] transition hover:-translate-y-0.5 hover:text-[#ff85a1] active:translate-y-0"
+          className="grid h-9 w-9 place-items-center rounded-[13px] border border-[var(--border-subtle)] bg-[var(--surface-soft)] text-[var(--text-muted)] transition hover:-translate-y-0.5 hover:text-[var(--danger)] active:translate-y-0"
           onClick={onDiscard}
           title="丢弃"
           type="button"
@@ -245,8 +245,8 @@ export function RecordCard({ preview, onDiscard, onSave }: RecordCardProps) {
 
 function Info({ icon, value }: { icon: ReactNode; value: string }) {
   return (
-    <div className="flex min-h-6 max-w-full items-center gap-1 rounded-full bg-[#111018] px-2 py-1 text-[11px] font-bold text-[#d8c8b8]">
-      <span className="shrink-0 text-[#d8c8b8]/70">{icon}</span>
+    <div className="flex min-h-6 max-w-full items-center gap-1 rounded-full bg-[var(--surface-soft)] px-2 py-1 text-[11px] font-bold text-[var(--text-muted)]">
+      <span className="shrink-0 text-[var(--text-muted)]">{icon}</span>
       <span className="truncate">{value}</span>
     </div>
   );
@@ -264,15 +264,15 @@ function DataPoint({
   value: string;
 }) {
   return (
-    <div className={`min-w-0 rounded-[12px] border px-2 py-1.5 ${ready ? 'border-[#353044] bg-[#181522]' : 'border-dashed border-[#353044] bg-[#111018]'}`}>
+    <div className={`min-w-0 rounded-[12px] border px-2 py-1.5 ${ready ? 'border-[var(--border-subtle)] bg-[var(--surface-elevated)]' : 'border-dashed border-[var(--border-subtle)] bg-[var(--surface-soft)]'}`}>
       <div className="mb-0.5 flex items-center justify-between gap-1.5">
-        <span className="flex min-w-0 items-center gap-1 text-[10px] font-bold text-[#d8c8b8]/75">
-          <span className={ready ? 'text-[#7ee0a0]' : 'text-[#d8c8b8]/70'}>{icon}</span>
+        <span className="flex min-w-0 items-center gap-1 text-[10px] font-bold text-[var(--text-muted)]">
+          <span className={ready ? 'text-[var(--success)]' : 'text-[var(--text-muted)]'}>{icon}</span>
           {label}
         </span>
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ready ? 'bg-[#7ee0a0]' : 'bg-[#4a4152]'}`} />
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ready ? 'bg-[var(--success)]' : 'bg-[var(--text-faint)]'}`} />
       </div>
-      <div className={`truncate text-xs font-bold ${ready ? 'text-[#f8f4ed]' : 'text-[#d8c8b8]/70'}`}>{value}</div>
+      <div className={`truncate text-xs font-bold ${ready ? 'text-[var(--text-strong)]' : 'text-[var(--text-muted)]'}`}>{value}</div>
     </div>
   );
 }

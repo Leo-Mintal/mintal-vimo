@@ -1,18 +1,20 @@
 package agent
 
 type AnalyzeRequest struct {
-	TurnID           string            `json:"turn_id,omitempty"`
-	Message          string            `json:"message"`
-	Timezone         string            `json:"timezone"`
-	Now              string            `json:"now,omitempty"`
-	ModelKey         string            `json:"model_key,omitempty"`
-	PendingRecord    *ContextRecord    `json:"pending_record,omitempty"`
-	RecentRecords    []ContextRecord   `json:"recent_records,omitempty"`
-	OpenContexts     []ContextRecord   `json:"open_contexts,omitempty"`
-	ClosedContexts   []ContextRecord   `json:"closed_contexts,omitempty"`
+	TurnID           string                `json:"turn_id,omitempty"`
+	Message          string                `json:"message"`
+	Timezone         string                `json:"timezone"`
+	Now              string                `json:"now,omitempty"`
+	ModelKey         string                `json:"model_key,omitempty"`
+	CustomModel      *CustomModelConfig    `json:"custom_model,omitempty"`
+	PendingRecord    *ContextRecord        `json:"pending_record,omitempty"`
+	RecentRecords    []ContextRecord       `json:"recent_records,omitempty"`
+	OpenContexts     []ContextRecord       `json:"open_contexts,omitempty"`
+	ClosedContexts   []ContextRecord       `json:"closed_contexts,omitempty"`
 	RecentMessages   []ConversationMessage `json:"recent_messages,omitempty"`
-	ReplyProfile     ReplyProfile      `json:"reply_profile,omitempty"`
-	FastReplyContext *FastReplyContext `json:"fast_reply_context,omitempty"`
+	ReplyProfile     ReplyProfile          `json:"reply_profile,omitempty"`
+	FastReplyContext *FastReplyContext     `json:"fast_reply_context,omitempty"`
+	Thinking         *ThinkingRequest      `json:"thinking,omitempty"`
 }
 
 type Result struct {
@@ -28,6 +30,7 @@ type Result struct {
 	Status           string            `json:"status"`
 	MissingFields    []string          `json:"missing_fields"`
 	Reply            string            `json:"reply"`
+	Reasoning        string            `json:"reasoning,omitempty"`
 	Intent           string            `json:"intent,omitempty"`
 	RecordAction     string            `json:"record_action,omitempty"`
 	TargetID         *string           `json:"target_id,omitempty"`
@@ -133,11 +136,24 @@ type SettingsPatch struct {
 }
 
 type ModelOption struct {
-	Key         string `json:"key"`
-	Label       string `json:"label"`
-	Description string `json:"description"`
-	Model       string `json:"model"`
-	Default     bool   `json:"default"`
+	Key              string `json:"key"`
+	Label            string `json:"label"`
+	Description      string `json:"description"`
+	Model            string `json:"model"`
+	Default          bool   `json:"default"`
+	SupportsThinking bool   `json:"supports_thinking"`
+}
+
+type CustomModelConfig struct {
+	Key              string `json:"key,omitempty"`
+	Label            string `json:"label,omitempty"`
+	Description      string `json:"description,omitempty"`
+	BaseURL          string `json:"base_url,omitempty"`
+	APIURL           string `json:"api_url,omitempty"`
+	APIKey           string `json:"api_key,omitempty"`
+	Model            string `json:"model,omitempty"`
+	TimeoutSeconds   int    `json:"timeout_seconds,omitempty"`
+	SupportsThinking bool   `json:"supports_thinking,omitempty"`
 }
 
 type ContextRecord struct {
@@ -187,6 +203,10 @@ type ConversationMessage struct {
 	CreatedAt string `json:"created_at,omitempty"`
 }
 
+type ThinkingRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
 type FastReplyRoute string
 
 const (
@@ -195,6 +215,7 @@ const (
 )
 
 type FastReplyResult struct {
-	Text  string         `json:"text"`
-	Route FastReplyRoute `json:"route"`
+	Text      string         `json:"text"`
+	Route     FastReplyRoute `json:"route"`
+	Reasoning string         `json:"reasoning,omitempty"`
 }

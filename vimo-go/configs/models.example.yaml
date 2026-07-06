@@ -57,6 +57,7 @@ providers:
     type: openai_compatible
     label: DeepSeek V4 Pro
     description: 推理能力强，适合长上下文、多步骤分析和复杂 Agent 判断的深度处理模型。
+    supports_thinking: true
     base_url: ${DEEPSEEK_BASE_URL}
     api_key: ${DEEPSEEK_API_KEY}
     chat_model: deepseek-v4-pro

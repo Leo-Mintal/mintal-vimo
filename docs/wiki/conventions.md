@@ -47,6 +47,7 @@
 - Always skills 只能约束通用行为和自然语言字段，不能改变 JSON schema、枚举、字段名、执行协议或 API 合约。
 - “说人话”类润色能力属于运行时 skill，不属于 Codex/Claude Code 开发工具 skill；当前精简版为 `vimo-go/prompts/skills/always/00-shuorenhua-natural-language.md`，覆盖聊天回复以及可沉淀 `title/content` 字段。
 - 模型不能自行下载或创建可执行 skill；如果需要未加载 skill，应通过结构化 skill need/request 交给后端 registry 判断是否存在、能否启用、是否需要用户授权。
+- Runtime skills 自主选择的详细方案见 `docs/wiki/runtime-skills-autonomy-plan.md`；正式实现前必须先同步 `docs/vimo-user-prd.md` 中的 skills 来源、安全检查、授权和隐私边界。
 - Prompt 片段使用两位数字前缀控制拼接顺序，例如 `00-role.md`。
 - 业务代码只负责加载 prompt 文件，不内联维护大段 prompt 文本。
 - 业务代码不得硬编码 AI 回复、确认话术、玩笑边界话术或模型失败兜底话术。

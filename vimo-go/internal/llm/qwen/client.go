@@ -54,6 +54,7 @@ func (c *Client) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatRespon
 		TopP:           firstFloat(req.TopP, c.params.TopP),
 		MaxTokens:      firstInt(req.MaxTokens, c.params.MaxTokens),
 		ResponseFormat: req.ResponseFormat,
+		EnableThinking: thinkingFlag(req.Thinking),
 		Stream:         false,
 	}
 
@@ -93,8 +94,9 @@ func (c *Client) Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatRespon
 		return nil, fmt.Errorf("model returned no choices")
 	}
 	return &llm.ChatResponse{
-		Content: parsed.Choices[0].Message.Content,
-		Raw:     raw,
+		Content:   parsed.Choices[0].Message.Content,
+		Reasoning: parsed.Choices[0].Message.ReasoningOutput(),
+		Raw:       raw,
 	}, nil
 }
 
@@ -116,6 +118,7 @@ func (c *Client) StreamChat(ctx context.Context, req llm.ChatRequest, onDelta fu
 		TopP:           firstFloat(req.TopP, c.params.TopP),
 		MaxTokens:      firstInt(req.MaxTokens, c.params.MaxTokens),
 		ResponseFormat: req.ResponseFormat,
+		EnableThinking: thinkingFlag(req.Thinking),
 		Stream:         true,
 	}
 
@@ -177,13 +180,31 @@ type chatCompletionRequest struct {
 	TopP           *float64            `json:"top_p,omitempty"`
 	MaxTokens      *int                `json:"max_tokens,omitempty"`
 	ResponseFormat *llm.ResponseFormat `json:"response_format,omitempty"`
+	EnableThinking *bool               `json:"enable_thinking,omitempty"`
 	Stream         bool                `json:"stream"`
 }
 
 type chatCompletionResponse struct {
 	Choices []struct {
-		Message llm.Message `json:"message"`
+		Message chatCompletionMessage `json:"message"`
 	} `json:"choices"`
+}
+
+type chatCompletionMessage struct {
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content"`
+	Reasoning        string `json:"reasoning"`
+	ReasoningText    string `json:"reasoning_text"`
+}
+
+func (m chatCompletionMessage) ReasoningOutput() string {
+	for _, value := range []string{m.ReasoningContent, m.Reasoning, m.ReasoningText} {
+		if text := strings.TrimSpace(value); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 type chatCompletionStreamResponse struct {
@@ -239,6 +260,14 @@ func firstInt(values ...*int) *int {
 		}
 	}
 	return nil
+}
+
+func thinkingFlag(options *llm.ThinkingOptions) *bool {
+	if options == nil {
+		return nil
+	}
+	enabled := options.Enabled
+	return &enabled
 }
 
 func chatCompletionsURL(baseURL string) string {

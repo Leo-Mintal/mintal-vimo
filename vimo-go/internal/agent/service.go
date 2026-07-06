@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
+	"mintal-vimo/vimo-go/internal/config"
 	"mintal-vimo/vimo-go/internal/llm"
+	"mintal-vimo/vimo-go/internal/llm/qwen"
 	"mintal-vimo/vimo-go/internal/vimotime"
 )
 
@@ -56,7 +59,7 @@ func (s *Service) Analyze(ctx context.Context, req AnalyzeRequest) (*Result, err
 		return nil, err
 	}
 
-	provider, _, err := s.models.Provider(req.ModelKey)
+	provider, providerKey, err := s.providerForRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +68,8 @@ func (s *Service) Analyze(ctx context.Context, req AnalyzeRequest) (*Result, err
 			{Role: "system", Content: s.systemPrompt},
 			{Role: "user", Content: string(promptJSON)},
 		},
-		Stream: false,
+		Thinking: s.thinkingOptionsForRequest(req, providerKey),
+		Stream:   false,
 	})
 	if err != nil {
 		return nil, err
@@ -78,6 +82,7 @@ func (s *Service) Analyze(ctx context.Context, req AnalyzeRequest) (*Result, err
 
 	pending := pendingContextForResult(result, promptPayload.OpenContexts, req.PendingRecord)
 	normalizeResultWithTime(result, promptPayload.Message, pending, promptPayload.Now, promptPayload.Timezone)
+	result.Reasoning = strings.TrimSpace(resp.Reasoning)
 	if strings.TrimSpace(result.Reply) == "" {
 		return nil, fmt.Errorf("agent reply is empty")
 	}
@@ -93,13 +98,13 @@ func (s *Service) StreamFastReply(ctx context.Context, req AnalyzeRequest, onDel
 		return nil, err
 	}
 	maxTokens := 320
-	candidates := s.fastReplyProviderCandidates(req.ModelKey)
+	candidates := s.fastReplyProviderCandidates(req)
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("models are not configured")
 	}
 	var lastErr error
-	for _, provider := range candidates {
-		result, err := s.sendFastReplyWithProvider(ctx, provider, promptJSON, maxTokens, onDelta)
+	for _, candidate := range candidates {
+		result, err := s.sendFastReplyWithProvider(ctx, candidate.provider, req, candidate.key, promptJSON, maxTokens, onDelta)
 		if err != nil {
 			lastErr = err
 			continue
@@ -112,25 +117,34 @@ func (s *Service) StreamFastReply(ctx context.Context, req AnalyzeRequest, onDel
 	return nil, fmt.Errorf("fast reply is empty")
 }
 
-func (s *Service) fastReplyProviderCandidates(requestedKey string) []llm.Provider {
+type providerCandidate struct {
+	key      string
+	provider llm.Provider
+}
+
+func (s *Service) fastReplyProviderCandidates(req AnalyzeRequest) []providerCandidate {
 	if s.models == nil {
 		return nil
 	}
-	var providers []llm.Provider
+	var providers []providerCandidate
 	seen := map[string]bool{}
+	if custom, key, err := providerFromCustomModel(req.CustomModel); err == nil && strings.TrimSpace(req.ModelKey) == key {
+		seen[key] = true
+		providers = append(providers, providerCandidate{key: key, provider: custom})
+	}
 	add := func(key string) {
 		key = strings.TrimSpace(key)
 		if key == "" || seen[key] {
 			return
 		}
-		provider, _, err := s.models.Provider(key)
+		provider, resolvedKey, err := s.models.Provider(key)
 		if err != nil {
 			return
 		}
-		seen[key] = true
-		providers = append(providers, provider)
+		seen[resolvedKey] = true
+		providers = append(providers, providerCandidate{key: resolvedKey, provider: provider})
 	}
-	add(requestedKey)
+	add(req.ModelKey)
 	add(s.models.activeKey)
 	for _, option := range s.models.Options() {
 		add(option.Key)
@@ -138,7 +152,76 @@ func (s *Service) fastReplyProviderCandidates(requestedKey string) []llm.Provide
 	return providers
 }
 
-func (s *Service) sendFastReplyWithProvider(ctx context.Context, provider llm.Provider, promptJSON []byte, maxTokens int, onDelta func(string) error) (*FastReplyResult, error) {
+func (s *Service) providerForRequest(req AnalyzeRequest) (llm.Provider, string, error) {
+	if custom, key, err := providerFromCustomModel(req.CustomModel); err == nil && strings.TrimSpace(req.ModelKey) == key {
+		return custom, key, nil
+	} else if err != nil && req.CustomModel != nil && strings.TrimSpace(req.ModelKey) == strings.TrimSpace(req.CustomModel.Key) {
+		return nil, "", err
+	}
+	return s.models.Provider(req.ModelKey)
+}
+
+func (s *Service) thinkingOptionsForRequest(req AnalyzeRequest, providerKey string) *llm.ThinkingOptions {
+	if req.Thinking == nil || !req.Thinking.Enabled || !s.modelSupportsThinking(req, providerKey) {
+		return nil
+	}
+	return &llm.ThinkingOptions{Enabled: true}
+}
+
+func (s *Service) modelSupportsThinking(req AnalyzeRequest, providerKey string) bool {
+	if req.CustomModel != nil && strings.TrimSpace(req.CustomModel.Key) == strings.TrimSpace(providerKey) {
+		return req.CustomModel.SupportsThinking
+	}
+	for _, option := range s.ModelOptions() {
+		if option.Key == providerKey {
+			return option.SupportsThinking
+		}
+	}
+	return false
+}
+
+func providerFromCustomModel(custom *CustomModelConfig) (llm.Provider, string, error) {
+	if custom == nil {
+		return nil, "", fmt.Errorf("custom model is empty")
+	}
+	key := strings.TrimSpace(custom.Key)
+	baseURL := strings.TrimSpace(custom.BaseURL)
+	if baseURL == "" {
+		baseURL = strings.TrimSpace(custom.APIURL)
+	}
+	model := strings.TrimSpace(custom.Model)
+	if key == "" {
+		return nil, "", fmt.Errorf("custom model key is required")
+	}
+	if baseURL == "" {
+		return nil, "", fmt.Errorf("custom model api url is required")
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return nil, "", fmt.Errorf("custom model api url is invalid")
+	}
+	if model == "" {
+		return nil, "", fmt.Errorf("custom model name is required")
+	}
+	timeout := custom.TimeoutSeconds
+	if timeout <= 0 {
+		timeout = 120
+	}
+	provider := qwen.NewClient(config.ProviderConfig{
+		Type:             "openai_compatible",
+		BaseURL:          baseURL,
+		APIKey:           strings.TrimSpace(custom.APIKey),
+		ChatModel:        model,
+		TimeoutSeconds:   timeout,
+		SupportsThinking: custom.SupportsThinking,
+		DefaultParams: config.ModelParams{
+			Stream: false,
+		},
+	})
+	return provider, key, nil
+}
+
+func (s *Service) sendFastReplyWithProvider(ctx context.Context, provider llm.Provider, req AnalyzeRequest, providerKey string, promptJSON []byte, maxTokens int, onDelta func(string) error) (*FastReplyResult, error) {
 	temp := 0.1
 	resp, err := provider.Chat(ctx, llm.ChatRequest{
 		Messages: []llm.Message{
@@ -148,6 +231,7 @@ func (s *Service) sendFastReplyWithProvider(ctx context.Context, provider llm.Pr
 		Temperature:    &temp,
 		MaxTokens:      &maxTokens,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		Thinking:       s.thinkingOptionsForRequest(req, providerKey),
 		Stream:         false,
 	})
 	if err != nil {
@@ -160,6 +244,7 @@ func (s *Service) sendFastReplyWithProvider(ctx context.Context, provider llm.Pr
 	if result.Text == "" {
 		return nil, fmt.Errorf("fast reply is empty")
 	}
+	result.Reasoning = strings.TrimSpace(resp.Reasoning)
 	if err := onDelta(result.Text); err != nil {
 		return nil, err
 	}
@@ -233,19 +318,19 @@ func isCompleteFastReply(text string) bool {
 }
 
 type promptPayload struct {
-	TurnID           string            `json:"turn_id,omitempty"`
-	Message          string            `json:"message"`
-	Timezone         string            `json:"timezone"`
-	Now              string            `json:"now"`
-	ModelKey         string            `json:"model_key,omitempty"`
-	ModelOptions     []ModelOption     `json:"model_options,omitempty"`
-	PendingRecord    *ContextRecord    `json:"pending_record,omitempty"`
-	RecentRecords    []ContextRecord   `json:"recent_records,omitempty"`
-	OpenContexts     []ContextRecord   `json:"open_contexts,omitempty"`
-	ClosedContexts   []ContextRecord   `json:"closed_contexts,omitempty"`
+	TurnID           string                `json:"turn_id,omitempty"`
+	Message          string                `json:"message"`
+	Timezone         string                `json:"timezone"`
+	Now              string                `json:"now"`
+	ModelKey         string                `json:"model_key,omitempty"`
+	ModelOptions     []ModelOption         `json:"model_options,omitempty"`
+	PendingRecord    *ContextRecord        `json:"pending_record,omitempty"`
+	RecentRecords    []ContextRecord       `json:"recent_records,omitempty"`
+	OpenContexts     []ContextRecord       `json:"open_contexts,omitempty"`
+	ClosedContexts   []ContextRecord       `json:"closed_contexts,omitempty"`
 	RecentMessages   []ConversationMessage `json:"recent_messages,omitempty"`
-	ReplyProfile     ReplyProfile      `json:"reply_profile,omitempty"`
-	FastReplyContext *FastReplyContext `json:"fast_reply_context,omitempty"`
+	ReplyProfile     ReplyProfile          `json:"reply_profile,omitempty"`
+	FastReplyContext *FastReplyContext     `json:"fast_reply_context,omitempty"`
 }
 
 func (s *Service) promptPayload(req AnalyzeRequest) (promptPayload, []byte, error) {
@@ -270,7 +355,7 @@ func (s *Service) promptPayload(req AnalyzeRequest) (promptPayload, []byte, erro
 		Timezone:         timezone,
 		Now:              nowText,
 		ModelKey:         strings.TrimSpace(req.ModelKey),
-		ModelOptions:     s.ModelOptions(),
+		ModelOptions:     modelOptionsForRequest(s.ModelOptions(), req.CustomModel),
 		PendingRecord:    req.PendingRecord,
 		RecentRecords:    req.RecentRecords,
 		OpenContexts:     openContextsFromRequest(req),
@@ -284,6 +369,36 @@ func (s *Service) promptPayload(req AnalyzeRequest) (promptPayload, []byte, erro
 		return promptPayload{}, nil, err
 	}
 	return payload, promptJSON, nil
+}
+
+func modelOptionsForRequest(options []ModelOption, custom *CustomModelConfig) []ModelOption {
+	if custom == nil {
+		return options
+	}
+	key := strings.TrimSpace(custom.Key)
+	model := strings.TrimSpace(custom.Model)
+	if key == "" || model == "" {
+		return options
+	}
+	next := make([]ModelOption, 0, len(options)+1)
+	for _, option := range options {
+		if option.Key != key {
+			next = append(next, option)
+		}
+	}
+	label := strings.TrimSpace(custom.Label)
+	if label == "" {
+		label = model
+	}
+	next = append(next, ModelOption{
+		Key:              key,
+		Label:            label,
+		Description:      strings.TrimSpace(custom.Description),
+		Model:            model,
+		Default:          false,
+		SupportsThinking: custom.SupportsThinking,
+	})
+	return next
 }
 
 func normalizeRecentMessages(messages []ConversationMessage) []ConversationMessage {

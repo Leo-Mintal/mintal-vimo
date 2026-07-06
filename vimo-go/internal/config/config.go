@@ -31,14 +31,15 @@ type ModelConfig struct {
 }
 
 type ProviderConfig struct {
-	Type           string
-	Label          string
-	Description    string
-	BaseURL        string
-	APIKey         string
-	ChatModel      string
-	TimeoutSeconds int
-	DefaultParams  ModelParams
+	Type             string
+	Label            string
+	Description      string
+	SupportsThinking bool
+	BaseURL          string
+	APIKey           string
+	ChatModel        string
+	TimeoutSeconds   int
+	DefaultParams    ModelParams
 }
 
 type ModelParams struct {
@@ -172,6 +173,8 @@ func LoadModelConfig(path string) (ModelConfig, error) {
 				provider.Label = value
 			case "description":
 				provider.Description = value
+			case "supports_thinking":
+				provider.SupportsThinking = strings.EqualFold(value, "true")
 			case "base_url":
 				provider.BaseURL = value
 			case "api_key":
