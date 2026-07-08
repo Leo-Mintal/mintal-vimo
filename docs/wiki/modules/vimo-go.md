@@ -36,8 +36,8 @@
 
 - `vimo-go/internal/llm.Provider` 定义统一接口。
 - `vimo-go/internal/llm.Provider` 保留非流式 `Chat`；`vimo-go/internal/llm.StreamProvider` 是可选流式接口，用于快路承接输出。
-- `vimo-go/internal/llm/qwen.Client` 调用 OpenAI Compatible `/v1/chat/completions`，`base_url` 可配置为服务根地址或已经包含 `/v1` 的 OpenAI 标准地址；快路协议请求使用非流式 JSON mode，用户可见的逐字效果由后端解析完整 `text` 后通过业务 SSE 发送给前端。
-- 未加载模型配置文件时，Qwen fallback 默认地址使用本机 `http://127.0.0.1:8001`；真实内网模型网关应通过未提交的本地 env 覆盖。
+- `vimo-go/internal/llm/qwen.Client` 调用 OpenAI Compatible `/v1/chat/completions`，`base_url` 可配置为服务根地址或已经包含 `/v1` 的 OpenAI 标准地址；快路和慢路协议请求都使用 JSON mode，用户可见的逐字效果由后端/前端解析完整结构化结果后通过业务 SSE 和本地队列展示。
+- 未显式配置 `ACTIVE_MODEL_CONFIG` 且默认模型配置文件缺失时，Qwen fallback 默认地址使用本机 `http://127.0.0.1:8001`；真实内网模型网关应通过未提交的本地 env 覆盖。显式配置 `ACTIVE_MODEL_CONFIG` 后，配置加载失败会直接报错，不再静默使用 fallback。
 - `vimo-go/internal/agent.ModelRegistry` 根据 `vimo-go/configs/models.yaml` 注册多个模型 provider。
 - `vimo-go/internal/agent.Service` 不直接依赖固定模型地址或模型 ID；每次 `POST /api/agent/messages` 和 `POST /api/agent/fast-reply/stream` 可通过 `model_key` 选择模型。
 - Agent 请求支持可选 `custom_model`，用于本轮临时构造 OpenAI-compatible provider；后端只校验并使用 `key`、`api_url/base_url`、`api_key`、`model`、`timeout_seconds` 和 `supports_thinking` 调用模型，不持久化该配置，也不把 API key 写入 prompt payload。
@@ -45,8 +45,11 @@
 - 模型配置可声明 `supports_thinking: true`；只有当前模型或自定义模型声明支持且请求包含 `thinking.enabled=true` 时，`vimo-go/internal/llm/qwen.Client` 才会向 OpenAI-compatible 请求体写入 `enable_thinking: true`。当前 `deepseek_v4_flash` 和 `deepseek_v4_pro` 都声明支持思考模式。
 - OpenAI-compatible 响应会兼容读取 `reasoning_content`、`reasoning` 或 `reasoning_text` 作为 reasoning；只有本轮请求实际启用 `thinking.enabled=true` 时，Agent service 才会保留 reasoning 并通过 `thinking.slow`、`record_preview.reasoning` 或快路 `fast_thinking` 暴露给前端，未开启时会丢弃 provider 默认返回的 reasoning。
 - `POST /api/agent/fast-reply/stream` 是独立快路 SSE 接口，只读取当前输入、上下文、模型选择、`turn_id` 和 `reply_profile` 生成即时承接文本，不执行任何记录动作。后端用 OpenAI Compatible `response_format={"type":"json_object"}` 非流式请求快路模型拿到完整 `text/route`，思考模式开启且 provider 返回 reasoning 时先发送 `fast_thinking`，再把解析后的 `text` 作为 `fast_delta` 展示给用户，并在 `fast_done.route` 中输出 `continue_slow` 或 `chat_only`。如果模型把协议 JSON 误放进 `text` 字段，后端只做协议解包；坏 JSON 会报错，不把半截 JSON 发到 UI。快路不是 provider 流式 reasoning；思考模式开启后只能在完整快路响应返回时一次性暴露 provider 返回的 reasoning。
-- `POST /api/agent/messages` 是慢路执行接口，负责完整 `Analyze`、意图栈、风险门控和 `record_preview`；前端会与快路接口并行调用，并把同一 `turn_id` 下已展示的快路文本作为 `fast_reply_context` 带入慢路。
-- `POST /api/agent/messages/stream` 是前端当前使用的统一 SSE：请求进入后并行启动快路 `StreamFastReply` 和慢路 `Analyze`；开启思考时事件顺序为 `fast_thinking -> fast_delta -> fast_done -> slow_thinking -> final -> done`。如果 `fast_done.route=chat_only`，接口直接发送 `done`，不再等待慢路结果；否则继续发送慢路 `slow_thinking/final/done`。`done` 是本轮成功完成的统一信号，前端所有成功收尾逻辑都应依赖它；`final` 的 payload 与旧 `/api/agent/messages` 兼容，包含 assistant message、`record_preview` 和旧客户端兼容用的 `thinking`。
+- `POST /api/agent/messages` 是慢路执行接口，负责完整 `Analyze`、意图栈、风险门控和 `record_preview`；统一流式接口会在快路判断为 `continue_slow` 后，把同一 `turn_id` 下已展示的快路文本作为 `fast_reply_context` 带入慢路。
+- `POST /api/agent/messages/stream` 是前端当前使用的统一 SSE：请求进入后先执行快路 `StreamFastReply`，`route=chat_only` 直接完成，`route=continue_slow` 再执行慢路 `AnalyzeWithHooks`；后端会发送结构化 `progress` 事件，覆盖 `run.started`、`fast_reply.started`、`fast_reply.completed`、`analyze.started`、`model.requested`、`model.completed`、`preview.created`、`action.planned`、`run.completed/run.failed` 等真实代码节点。
+- `progress` payload 使用 `id/turn_id/seq/type/title/detail/status/payload/created_at` 结构；这些状态只能来自代码执行节点和模型结构化结果，不根据用户原文关键词判断，也不由模型编造进度。
+- `POST /api/agent/messages/stream` 会在慢路 `action.planned` 后，对明确 `ready` 且通过默认风险矩阵的主候选执行 Records 动作；成功后发送 `record.create.completed` / `record.update.completed` / `record.delete.completed` progress，并通过 `record_execution` 事件返回最终 record。需要用户确认、目标不明确、hard stop 或风险不足时不执行，继续交给前端待确认 UI。
+- `POST /api/agent/messages/stream` 继续保留旧事件兼容：开启思考时仍可能发送 `fast_thinking`、`fast_delta`、`fast_done`、`slow_thinking`、`final`、`done`。如果 `fast_done.route=chat_only`，接口直接发送 `run.completed` 和 `done`，不再等待慢路结果；否则继续发送慢路 `slow_thinking/final/done`。`done` 是本轮成功完成的统一信号，前端所有成功收尾逻辑都应依赖它；`final` 的 payload 与旧 `/api/agent/messages` 兼容，包含 assistant message、`record_preview` 和旧客户端兼容用的 `thinking`。
 - 快路 prompt 位于 `vimo-go/prompts/agent/fast-reply/`，输出完整 JSON object：`text` 是用户可见回复，`route=chat_only` 只用于纯寒暄、普通闲聊、轻问题或不需要结构化处理的自然回应；`chat_only` 的 `text` 必须能作为最终回答成立，不能写成“我先想一下/我来处理”的慢路占位。重复或高度近似的普通闲聊问题应结合 `recent_messages` 承认已经答过并保持同一立场。所有记录、提醒、查询、修改删除、配置、未收口上下文接续或不确定场景都必须 `continue_slow`。快路协议 JSON 不走模型流式输出，避免半截 JSON 泄漏到 UI。
 - 默认模型是 `deepseek_v4_flash`；`GET /api/agent/models` 当前按 DeepSeek、GPT、Qwen 顺序返回 `deepseek_v4_flash`、`deepseek_v4_pro`、`gpt_5_4_mini`、`gpt_5_5`、`qwen_local`。
 - `GET /api/agent/models` 返回前端可选模型列表，前端可以热切换。
@@ -56,6 +59,7 @@
 - `vimo-go/prompts/skills/library/` 保存运行时 skills 的项目内来源和扩展参考，不会自动拼进模型上下文。
 - 如果模型需要未加载的 runtime skill，应输出结构化 skill need/request，由后端 skill registry 决定是否加载、安装、创建或要求用户授权；模型本身不能自行下载或创建可执行 skill。
 - Runtime skills 自主选择与安全启用的未来方案沉淀在 `docs/wiki/runtime-skills-autonomy-plan.md`；当前代码仍只固定加载 `skills/always/*.md`，没有动态 registry 或 Safety Gate。
+- 模型回复链路审计和恢复策略见 `docs/wiki/model-reply-pipeline-recovery.md`。
 - `vimo-go/prompts/agent/analyze/05-intention-engine.md` 是固定加载的意图分析前置 skill，位于 Role 和 Output Schema 之间，后续记录解析依赖其意图判断。
 - Agent analyze prompt 使用按文件名前缀排序的模块化片段；新增规则时优先保持单一职责，避免重复展开。
 - `vimo-go/prompts/agent/analyze/15-context-rules.md` 只保留上下文字段、待确认合并和回复风格等必要补充，避免与 `Intention Engine` 重复。
@@ -79,9 +83,11 @@
 - Agent 结果支持兼容式意图栈：`primary_intent` 决定主回复和主执行动作，`secondary_intents` 保留附带但重要的信息，`record_candidates` 承载多张候选记录，`execution_plan` 给出执行建议，`reply_strategy` 描述回复组织方式。
 - 后端会从意图栈回填旧字段，也会在旧模型未返回意图栈时从旧字段生成意图栈；明确、字段完整且高置信的 `todo|memo|idea` 创建型副候选可以保留 `auto_execute`，日记、情绪、长期记忆和主动回访等敏感副候选仍会降为 `preview|pending`。
 - 后端归一化层包含结构化 hard stop gate：删除、非 pending 的修改/删除目标缺失或不唯一、`field_confidence.target` 低于阈值、需要提醒但没有 `datetime_iso`、主意图是日记/隐私记忆/主动回访时，都会降为 `need_confirmation`，并把 `hard_stop_*` 写入 `intent_trace.gate_reasons`。
+- 关闭提醒属于高风险更新但不再一律 hard stop：当 `record_action=update`、`need_reminder=false`、目标唯一且字段置信通过风险矩阵时，归一化会清理残留的 `need_reminder/datetime` 缺失字段并允许后端自动更新；目标缺失、不唯一或低置信仍进入确认。
 - 当 `open_contexts` 中的未收口项正在等待高风险字段（如提醒时间）时，用户本轮补字段的内容必须作为主意图 `update_pending`/`confirm_pending`；同句夹带的情绪或日记线索进入副意图，不能和字段答案合并成新记录正文。
+- 当 `open_contexts` 中的未收口项本身是 `record_action=delete`，后端归一化会在 `update_pending/confirm_pending` 中沿用该删除动作和 `related_ids`；多目标删除的 pending id 只作为 `context_target_id`，不能被当成真实记录 `target_id`。
 - Agent 结果支持 `intent=config_update` 和 `settings_patch`，用于修改 Vimo 自身可配置项；该意图不沉淀记录，必须 `record_action=none`、`should_preview=false`。`settings_patch.preset` 只能使用 `INTJ|ENFJ|ISTP|ENFP|custom`。
-- `record_action=create|update|delete|none` 是前端执行记录变更的结构化协议；`delete` 表示移入回收站，`update` 可更新或恢复 `discarded` 记录；非 pending 的 `update`/`delete` 只有在唯一目标明确时才可补全 `target_id`，目标不唯一必须进入确认。
+- `record_action=create|update|delete|none` 是记录变更结构化协议；统一流式主链路中明确可自动执行的主候选由后端执行，前端手动确认和旧接口兼容路径仍可按该字段执行。`delete` 表示移入回收站，`update` 可更新或恢复 `discarded` 记录；非 pending 的 `update`/`delete` 只有在唯一目标明确时才可补全 `target_id`，目标不唯一必须进入确认。
 - `context_action=open|update|close|none` 是前端维护未收口上下文池的结构化协议；代码只按模型返回的结构化字段维护上下文，不根据用户文本做关键词分流。
 - 本地后端不再通过关键词、短语或正则判断用户意图；新增、查询、续聊、确认、重复/相近和玩笑边界都由模型根据系统提示词和上下文返回 `intent`。
 - 后端归一化层只做结构化处理：JSON 解析、枚举归一化、字段完整性校验、`answer_query`/`joke_response` 不出预览、重复/相近/澄清进入确认态。

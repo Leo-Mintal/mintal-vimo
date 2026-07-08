@@ -119,6 +119,84 @@ func TestNormalizeResultConfirmPendingCanBecomeReady(t *testing.T) {
 	}
 }
 
+func TestNormalizeResultConfirmPendingKeepsPendingDeleteAction(t *testing.T) {
+	result := &Result{
+		Type:          "todo",
+		Title:         "删除剩余的早餐记录",
+		Content:       "删除剩余的早餐记录",
+		Confidence:    0.95,
+		Status:        "ready",
+		MissingFields: []string{},
+		Reply:         "我会删除这两条早餐记录。",
+		Intent:        "confirm_pending",
+		RecordAction:  "create",
+		RecordCandidates: []RecordCandidate{{
+			ID:                "candidate_delete_breakfast",
+			IntentID:          "intent_primary",
+			Type:              "todo",
+			Title:             "删除剩余的早餐记录",
+			Content:           "删除剩余的早餐记录",
+			Confidence:        0.95,
+			Status:            "ready",
+			RecordAction:      "create",
+			ExecutionDecision: "auto_execute",
+			Primary:           true,
+		}},
+		ExecutionPlan: []ExecutionItem{{
+			ID:          "exec_delete_breakfast",
+			IntentID:    "intent_primary",
+			CandidateID: "candidate_delete_breakfast",
+			Decision:    "auto_execute",
+			Action:      "create",
+			Risk:        "low",
+		}},
+	}
+	pending := &ContextRecord{
+		ID:            "pending_delete_breakfast",
+		Type:          "todo",
+		Title:         "删除剩余的早餐记录",
+		Content:       "删除剩余的早餐记录",
+		Status:        "need_confirmation",
+		Intent:        "delete_record",
+		RecordAction:  "delete",
+		RelatedIDs:    []string{"rec_breakfast_today", "rec_breakfast_yesterday"},
+		MissingFields: []string{"target"},
+	}
+
+	normalizeResult(result, "确认删除", pending)
+
+	if result.RecordAction != "delete" {
+		t.Fatalf("RecordAction = %q, want delete", result.RecordAction)
+	}
+	if result.TargetID != nil {
+		t.Fatalf("TargetID = %v, want nil for multi-target pending delete", result.TargetID)
+	}
+	if got := result.RelatedIDs; len(got) != 2 || got[0] != "rec_breakfast_today" || got[1] != "rec_breakfast_yesterday" {
+		t.Fatalf("RelatedIDs = %#v, want pending delete targets", got)
+	}
+	if result.ContextTargetID == nil || *result.ContextTargetID != "pending_delete_breakfast" {
+		t.Fatalf("ContextTargetID = %v, want pending context id", result.ContextTargetID)
+	}
+	if result.Status != "ready" {
+		t.Fatalf("Status = %q, want ready for explicit pending confirmation", result.Status)
+	}
+	if len(result.RecordCandidates) == 0 || result.RecordCandidates[0].RecordAction != "delete" {
+		t.Fatalf("RecordCandidates = %#v, want delete candidate", result.RecordCandidates)
+	}
+	if result.RecordCandidates[0].TargetID != nil {
+		t.Fatalf("candidate TargetID = %v, want nil for multi-target delete", result.RecordCandidates[0].TargetID)
+	}
+	if got := result.RecordCandidates[0].RelatedIDs; len(got) != 2 || got[0] != "rec_breakfast_today" || got[1] != "rec_breakfast_yesterday" {
+		t.Fatalf("candidate RelatedIDs = %#v, want pending delete targets", got)
+	}
+	if len(result.ExecutionPlan) == 0 || result.ExecutionPlan[0].Action != "delete" {
+		t.Fatalf("ExecutionPlan = %#v, want delete action", result.ExecutionPlan)
+	}
+	if result.ExecutionPlan[0].TargetID != nil {
+		t.Fatalf("execution TargetID = %v, want nil for multi-target delete", result.ExecutionPlan[0].TargetID)
+	}
+}
+
 func TestNormalizeResultPendingTimeKeepsPendingDateWhenUserAddsClock(t *testing.T) {
 	pendingDatetimeText := "明天晚上"
 	result := &Result{
@@ -576,7 +654,7 @@ func TestNormalizeResultUpdateRecordWithLowTargetConfidenceRequiresConfirmation(
 	}
 }
 
-func TestNormalizeResultNeedReminderChangeRequiresConfirmation(t *testing.T) {
+func TestNormalizeResultNeedReminderChangeWithClearTargetCanExecute(t *testing.T) {
 	result := &Result{
 		Type:          "todo",
 		Title:         "交周报",
@@ -599,11 +677,45 @@ func TestNormalizeResultNeedReminderChangeRequiresConfirmation(t *testing.T) {
 
 	normalizeResult(result, "把交周报的提醒删掉", nil)
 
+	if result.Status != "ready" {
+		t.Fatalf("Status = %q, want ready", result.Status)
+	}
+	if hasString(result.MissingFields, "need_reminder") || hasString(result.MissingFields, "datetime") {
+		t.Fatalf("MissingFields = %#v, want reminder fields cleared", result.MissingFields)
+	}
+	if result.IntentTrace != nil && hasString(result.IntentTrace.GateReasons, "hard_stop_need_reminder_change") {
+		t.Fatalf("GateReasons = %#v, want no reminder-change hard stop", result.IntentTrace.GateReasons)
+	}
+	if len(result.ExecutionPlan) == 0 || result.ExecutionPlan[0].Decision != "auto_execute" {
+		t.Fatalf("ExecutionPlan = %#v, want auto_execute", result.ExecutionPlan)
+	}
+}
+
+func TestNormalizeResultNeedReminderChangeWithoutTargetRequiresConfirmation(t *testing.T) {
+	result := &Result{
+		Type:          "todo",
+		Title:         "交周报",
+		Content:       "交周报",
+		NeedReminder:  false,
+		Confidence:    0.98,
+		Status:        "ready",
+		MissingFields: []string{},
+		Reply:         "我需要先确认是哪条提醒。",
+		Intent:        "update_record",
+		RecordAction:  "update",
+		FieldRisk: &FieldRisks{
+			NeedReminder: "high",
+			Target:       "high",
+		},
+	}
+
+	normalizeResult(result, "把交周报的提醒删掉", nil)
+
 	if result.Status != "need_confirmation" {
 		t.Fatalf("Status = %q, want need_confirmation", result.Status)
 	}
-	if result.IntentTrace == nil || !hasString(result.IntentTrace.GateReasons, "hard_stop_need_reminder_change") {
-		t.Fatalf("GateReasons = %#v, want hard_stop_need_reminder_change", result.IntentTrace)
+	if result.IntentTrace == nil || !hasString(result.IntentTrace.GateReasons, "hard_stop_target_not_unique") {
+		t.Fatalf("GateReasons = %#v, want hard_stop_target_not_unique", result.IntentTrace)
 	}
 	if len(result.ExecutionPlan) == 0 || result.ExecutionPlan[0].Decision == "auto_execute" {
 		t.Fatalf("ExecutionPlan = %#v, want non-auto", result.ExecutionPlan)
@@ -1482,6 +1594,9 @@ func TestAnalyzeSkipsThinkingWhenModelDoesNotSupportIt(t *testing.T) {
 	}
 	if provider.requests[0].Thinking != nil {
 		t.Fatalf("Thinking = %#v, want nil for unsupported model", provider.requests[0].Thinking)
+	}
+	if provider.requests[0].ResponseFormat == nil || provider.requests[0].ResponseFormat.Type != "json_object" {
+		t.Fatalf("ResponseFormat = %#v, want json_object", provider.requests[0].ResponseFormat)
 	}
 }
 

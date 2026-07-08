@@ -2,16 +2,16 @@
 
 ## 背景
 
-当前 Vimo 已实现快路/慢路消息链路：
+当前 Vimo 已实现统一 SSE 快路/慢路消息链路：
 
-- 前端发送消息时并行调用 `POST /api/agent/fast-reply/stream` 和 `POST /api/agent/messages`。
-- 快路通过 SSE 输出 `fast_delta`，前端把同一条 AI 回复逐字渲染出来。
-- 慢路通过普通 JSON 接口返回最终 `message` 和 `record_preview`，负责完整意图栈、候选记录、风险门控和执行计划。
-- `POST /api/agent/messages/stream` 已存在兼容式 SSE 接口，但目前主要输出 `fast_delta`、`fast_done`、`final`、`done`，还没有完整的慢路过程事件。
+- 前端主链路统一调用 `POST /api/agent/messages/stream`。
+- 快路通过兼容事件输出 `fast_thinking`、`fast_delta`、`fast_done`，前端把解析后的 AI 文本逐字渲染出来。
+- 慢路通过同一个 SSE 输出 `slow_thinking`、`final`、`done`，负责完整意图栈、候选记录、风险门控和执行计划。
+- 后端已开始输出结构化 `progress` 事件，用于展示真实代码节点，例如 `run.started`、`analyze.started`、`model.requested`、`preview.created`、`action.planned` 和 `run.completed`。
 
 这个方案用于后续把当前体验升级成类似 Codex 的实时反馈链路：不仅流式展示 AI 文本，也实时展示本轮 Agent 正在做什么、做到了哪一步、是否需要确认或已经完成执行。
 
-本方案暂不改现有逻辑，仅作为后续实现参考。
+本方案记录目标链路和分阶段路线；第一阶段的统一 SSE 与基础 `progress` 事件已经落地，后续重点是事件可靠性和执行链路后移。
 
 ## 现状边界
 
@@ -25,11 +25,10 @@
 
 当前缺口：
 
-- 慢路过程没有结构化事件。
-- 前端无法展示“正在分析意图”“已生成候选”“进入待确认”“已保存”等真实过程。
-- 没有统一的 `run/turn/event` 事件模型。
+- 第一阶段已经具备基础 `progress` 事件，但事件类型、payload 和 UI 仍较轻量，还不是完整 run 观测模型。
+- 前端可以展示“正在分析意图”“已生成候选”“进入待确认/计划自动保存/已执行记录动作”等真实过程；统一流式主链路的主候选自动保存、更新、删除已由后端执行并通过 `record_execution` 返回结果。
 - 没有事件持久化和断线补拉。
-- 自动保存、更新、删除仍主要由前端在收到 `record_preview` 后调用 Records API 执行，尚未进入统一 Agent 事件流。
+- 副候选自动执行、待确认后的手动确认和旧兼容路径仍由前端调用 Records API；这些动作尚未完全进入统一 Agent 事件流。
 
 ## 目标体验
 
@@ -89,7 +88,7 @@ Vimo：
 - 不做本地关键词意图判断：前端和后端业务代码只消费模型返回的结构化字段，不根据用户原文做关键词、正则或短语分流。
 - 保持快路/慢路边界：快路只做即时承接，不能声称完成；慢路负责真实识别、风险门控和执行准备。
 - 保持兼容：已有 `/api/agent/messages` 和 `/api/agent/fast-reply/stream` 先保留，主链路逐步迁移到 `/api/agent/messages/stream`。
-- 先轻后重：第一阶段只做实时事件展示，不急于做持久化和后端统一执行 Records 动作。
+- 先轻后重：当前已经迁移统一流式主链路的主候选 Records 动作；后续再迁移副候选、手动确认和事件持久化。
 
 ## 事件模型
 
@@ -143,7 +142,7 @@ run.failed
 
 ## 后端改造建议
 
-第一阶段主改 `POST /api/agent/messages/stream`。
+第一阶段主改 `POST /api/agent/messages/stream`。当前已落地基础版本，后续可以继续扩展事件 payload 和可靠性。
 
 建议做法：
 
@@ -170,10 +169,11 @@ run.failed
 
 ## 前端改造建议
 
-第一阶段把 ChatAgent 主链路改为单 SSE：
+第一阶段把 ChatAgent 主链路改为单 SSE。当前主链路已经完成：
 
-- 当前：`sendAgentFastReplyStream(request)` + `sendAgentMessage(slowRequest)`。
-- 目标：只调用 `sendAgentMessageStream(request)`。
+- 当前：只调用 `sendAgentMessageStream(request)`。
+- 前端新增消息级 `progressEvents`，消费统一 `progress` 事件并渲染工作流时间线。
+- 兼容旧文本事件：`fast_thinking`、`fast_delta`、`slow_thinking`、`final`、`done`。
 
 建议调整点：
 
@@ -185,7 +185,7 @@ run.failed
 6. `final` 到达后沿用现有逻辑：
    - 用最终 `message.content` 校准当前 AI 回复。
    - 归一化 `record_preview`。
-   - 执行自动保存、候选卡、待确认逻辑。
+   - 消费 `record_execution` 同步后端执行结果，并处理候选卡、待确认逻辑。
 7. `run.failed` 或 `error` 到达时，只展示普通错误状态，不追加固定 assistant 文案。
 
 进度 UI 建议：
@@ -206,7 +206,7 @@ run.failed
 - 前端主链路切到单 SSE。
 - 增加消息级进度时间线。
 - 不做事件持久化。
-- 不迁移 Records 动作到后端。
+- 统一流式主链路的主候选 Records 动作迁移到后端，副候选和待确认动作暂不迁移。
 
 收益：
 
@@ -226,11 +226,11 @@ run.failed
 - 避免只靠内存 SSE 导致漏事件。
 - 为回放、排查和调试提供基础。
 
-### 第三阶段：统一执行链路
+### 第三阶段：完整统一执行链路
 
 范围：
 
-- 将自动保存、更新、删除等 Records 动作逐步迁到后端统一执行。
+- 已迁移统一流式主链路的主候选自动保存、更新、删除；后续将副候选、待确认确认后的执行和更多 Records 动作逐步迁到后端统一执行。
 - 事件流新增：
   - `record.create.started`
   - `record.create.completed`
@@ -249,7 +249,7 @@ run.failed
 
 `docs/vimo-user-prd.md` 的“8.11 识别结果反馈”已经明确要求：
 
-- 用户提交后并行启动快路和慢路。
+- 用户提交后先启动快路生成即时承接并判断 `route`；只有 `continue_slow` 才进入慢路。
 - 快路只能即时承接，不能提前声称完成。
 - 慢路负责完整意图栈、候选记录、风险门控和执行计划。
 - AI 回复需要流式渲染。
@@ -270,4 +270,3 @@ run.failed
 - `answer_query/joke_response/config_update` 不展示记录卡。
 - 模型失败时只展示普通错误 UI，不写入 assistant 固定回复。
 - 旧接口 `/api/agent/messages` 和 `/api/agent/fast-reply/stream` 不受影响。
-

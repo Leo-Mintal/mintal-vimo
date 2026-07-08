@@ -1,4 +1,4 @@
-import type { AgentMessageRequest, AgentMessageResponse, AgentModelsResponse, AgentStreamEvent } from '../types/agent';
+import type { AgentMessageRequest, AgentMessageResponse, AgentModelsResponse, AgentProgressEvent, AgentProgressStatus, AgentRecordExecutionAction, AgentRecordExecutionEvent, AgentStreamEvent } from '../types/agent';
 import { API_BASE, apiHeaders, requestJSON } from './api';
 
 export function listAgentModels() {
@@ -112,6 +112,12 @@ function parseSSEEvent(raw: string): AgentStreamEvent | null {
   const dataText = dataLines.join('\n');
   const data = dataText ? JSON.parse(dataText) as Record<string, unknown> : {};
   switch (eventName) {
+    case 'progress': {
+      const event = parseProgressEvent(data);
+      return event ? { type: 'progress', event } : null;
+    }
+    case 'record_execution':
+      return { type: 'record_execution', event: parseRecordExecutionEvent(data) };
     case 'fast_delta':
       return { type: 'fast_delta', delta: typeof data.delta === 'string' ? data.delta : '' };
     case 'fast_thinking':
@@ -134,4 +140,40 @@ function parseSSEEvent(raw: string): AgentStreamEvent | null {
     default:
       return null;
   }
+}
+
+function parseRecordExecutionEvent(data: Record<string, unknown>): AgentRecordExecutionEvent {
+  return {
+    action: normalizeRecordExecutionAction(data.action),
+    status: data.status === 'failed' ? 'failed' : 'completed',
+    record: data.record,
+    error: typeof data.error === 'string' ? data.error : undefined,
+  };
+}
+
+function normalizeRecordExecutionAction(value: unknown): AgentRecordExecutionAction {
+  return value === 'created' || value === 'updated' || value === 'deleted' || value === 'restored' ? value : 'none';
+}
+
+function parseProgressEvent(data: Record<string, unknown>): AgentProgressEvent | null {
+  const type = typeof data.type === 'string' ? data.type.trim() : '';
+  const title = typeof data.title === 'string' ? data.title.trim() : '';
+  if (!type || !title) {
+    return null;
+  }
+  return {
+    id: typeof data.id === 'string' ? data.id : `${type}-${Number(data.seq) || 0}`,
+    turn_id: typeof data.turn_id === 'string' ? data.turn_id : '',
+    seq: typeof data.seq === 'number' && Number.isFinite(data.seq) ? data.seq : 0,
+    type,
+    title,
+    detail: typeof data.detail === 'string' && data.detail.trim() ? data.detail.trim() : undefined,
+    status: normalizeProgressStatus(data.status),
+    payload: data.payload,
+    created_at: typeof data.created_at === 'string' ? data.created_at : new Date().toISOString(),
+  };
+}
+
+function normalizeProgressStatus(value: unknown): AgentProgressStatus {
+  return value === 'running' || value === 'completed' || value === 'warning' || value === 'failed' ? value : 'completed';
 }

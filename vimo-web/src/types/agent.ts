@@ -222,7 +222,32 @@ export interface ThinkingPayload {
   slow?: string;
 }
 
+export type AgentProgressStatus = 'running' | 'completed' | 'warning' | 'failed';
+
+export interface AgentProgressEvent {
+  id: string;
+  turn_id: string;
+  seq: number;
+  type: string;
+  title: string;
+  detail?: string;
+  status: AgentProgressStatus;
+  payload?: unknown;
+  created_at: string;
+}
+
+export type AgentRecordExecutionAction = 'created' | 'updated' | 'deleted' | 'restored' | 'none';
+
+export interface AgentRecordExecutionEvent {
+  action: AgentRecordExecutionAction;
+  status: 'completed' | 'failed';
+  record?: unknown;
+  error?: string;
+}
+
 export type AgentStreamEvent =
+  | { type: 'progress'; event: AgentProgressEvent }
+  | { type: 'record_execution'; event: AgentRecordExecutionEvent }
   | { type: 'fast_delta'; delta: string }
   | { type: 'fast_thinking'; content: string }
   | { type: 'fast_done'; route?: FastReplyRoute }

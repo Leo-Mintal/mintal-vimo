@@ -9,6 +9,7 @@
 ## 配置
 
 - 模型地址、模型 ID、超时和默认采样参数放在 `vimo-go/configs/models.yaml` 或环境变量中。
+- `ACTIVE_MODEL_CONFIG` 显式配置后必须加载成功；加载失败应报错，不静默切到 fallback 模型。未显式配置时才允许使用本机默认 fallback。
 - OpenAI Compatible `base_url` 可填写服务根地址，也可直接填写到 `/v1`，客户端会统一请求 `/chat/completions`。
 - `vimo-go/configs/models.example.yaml` 和 `vimo-go/.env.example` 只提交示例值。
 - 不在业务代码中写死真实模型服务地址和模型 ID。
@@ -24,9 +25,10 @@
 
 - 后端 API 使用 `/api` 前缀。
 - Agent 接口返回 assistant 消息和 `record_preview`。
-- `/api/agent/fast-reply/stream` 是独立快路 SSE 接口，后端用模型 JSON mode 非流式拿完整 `text/route`，再把 `text` 作为 `fast_delta` 发给前端；快路 `fast_done.route=chat_only` 表示纯闲聊可只展示快路回复并跳过慢路，`continue_slow` 才进入慢路。`/api/agent/messages` 是慢路执行接口。`/api/agent/messages/stream` 保留兼容，事件顺序为快路 `fast_delta/fast_done`，必要时再发慢路 `final/done`，错误用 `error`。
-- 快路只做即时承接，不执行记录保存、修改、删除或提醒履约；慢路 `final.record_preview` 才能驱动前端执行计划。
+- `/api/agent/fast-reply/stream` 是独立快路 SSE 接口，后端用模型 JSON mode 非流式拿完整 `text/route`，再把 `text` 作为 `fast_delta` 发给前端；快路 `fast_done.route=chat_only` 表示纯闲聊可只展示快路回复并跳过慢路，`continue_slow` 才进入慢路。`/api/agent/messages` 是慢路执行接口，慢路也必须请求 JSON mode。`/api/agent/messages/stream` 是当前主链路，会发送统一 `progress` 事件和兼容旧客户端的 `fast_delta/fast_done/slow_thinking/final/done`；错误用 `error`，成功完成以 `done` 为准。
+- 快路只做即时承接，不执行记录保存、修改、删除或提醒履约；慢路 `final.record_preview` 和 `record_execution` 才能驱动记录变更。统一流式主链路中明确可自动执行的主候选由后端执行，前端负责同步结果、待确认 UI 和手动确认。
 - 同一轮快路和慢路请求共享 `turn_id`；慢路请求可以携带 `fast_reply_context`，用于告诉模型快路已经对用户说了什么；慢路回复需要续写同一个助手，不重复快路承接。
+- 如果慢路最终回复以快路已展示文本开头，前端只展示新增部分；完全相同则不重复显示。
 - Agent 请求可以携带 `recent_messages`，只用于模型理解短追问和上一句闲聊语境；不得把它变成本地关键词分流。
 - Agent `record_preview` 可包含字段级 `field_confidence` 和 `field_risk`；代码只能按这些结构化字段做风险矩阵和 UI 展示，不能回到用户原文关键词判断。
 - 记录状态使用 `ready`、`need_confirmation`、`saved`、`discarded`、`completed`。
@@ -52,6 +54,7 @@
 - 业务代码只负责加载 prompt 文件，不内联维护大段 prompt 文本。
 - 业务代码不得硬编码 AI 回复、确认话术、玩笑边界话术或模型失败兜底话术。
 - 模型失败时可以展示普通错误 UI，但不得写入 assistant 消息冒充 AI 回复。
+- Provider reasoning 只在用户明确开启思考模式时临时展示，默认不写入聊天历史持久化或长期记录。
 - 用户意图、记录类型、玩笑边界、查询、重复/相近和待确认接续都由模型判断；本地不得用关键词、短语表或正则分流。
 - 历史查询后续应走语义/相似度检索，把候选历史记录交给模型判断，不做固定关键词路线。
 

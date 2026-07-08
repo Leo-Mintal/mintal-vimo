@@ -22,6 +22,8 @@
 
 如果 `intent=delete_record` 且目标唯一、`target_id` 明确、目标字段置信度高，可以 `auto_execute`，由代码层执行软删除并保留回收站恢复能力；目标不唯一或目标置信不足时必须 `status=need_confirmation`，候选放 `related_ids`。
 
+如果用户正在确认一个 `open_contexts.context_kind=pending_delete` 或 `record_action=delete` 的未收口删除任务，继续使用 `record_action=delete`；不要因为本轮确认话语很短，或因为 `title/content` 类似“删除剩余记录”，就把它改成 `create` 待办。
+
 如果 `intent=update_record` 且目标不唯一，必须 `status=need_confirmation`，候选放 `related_ids`。
 
 如果 `intent=update_pending|confirm_pending` 且只是修正未收口记录的低风险字段，可以直接更新未收口项；若会改变提醒时间、提醒开关或目标记录，按高风险字段处理。

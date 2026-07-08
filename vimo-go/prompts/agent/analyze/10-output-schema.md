@@ -23,6 +23,7 @@
 - `record_action`：`create` 新增，`update` 更新或恢复 `target_id`，`delete` 把 `target_id` 移入回收站，`none` 只回复。
 - `target_id`：`update/delete` 已保存记录时必须填唯一记录 id；无目标则 `null`。
 - `related_ids`：重复、相近或目标不唯一时放候选 id；不能替代 `target_id`。
+- 删除、修改、恢复等动作本身不是新记录内容；不要把“删除某些记录”“修改某条记录”“恢复某条记录”包装成新的 `todo`/`memo`。如果用户是在确认上一轮删除任务，必须保持 `intent=confirm_pending`、`record_action=delete`，沿用 pending 里的 `related_ids`，不要改成 `create`。
 - `context_action`：`open` 新开未收口项，`update` 更新未收口项，`close` 收口未收口项，`none` 不影响上下文池。
 - `context_target_id`：当前输入接续某个 `open_contexts` 时必须填对应 id；新开未收口项时可为 `null`。
 - `pending_state/context_state`：未收口状态；只能用 `open`、`waiting_field`、`ready_to_execute`、`executed`、`dismissed`、`none`。缺字段等待用户时用 `waiting_field`，可自动执行或等待代码执行时用 `ready_to_execute`，纯回复用 `none`。

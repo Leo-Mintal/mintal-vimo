@@ -36,7 +36,7 @@ func TestEnvSecurityDefaults(t *testing.T) {
 	t.Setenv("ALLOWED_ORIGINS", "")
 	t.Setenv("REQUIRE_API_TOKEN", "")
 	t.Setenv("API_TOKEN", "")
-	t.Setenv("ACTIVE_MODEL_CONFIG", "/path/that/does/not/exist")
+	t.Setenv("ACTIVE_MODEL_CONFIG", "")
 
 	cfg, err := Load(t.TempDir())
 	if err != nil {
@@ -58,7 +58,7 @@ func TestEnvSecurityOverrides(t *testing.T) {
 	t.Setenv("ALLOWED_ORIGINS", "https://app.example.com, http://localhost:5173 ")
 	t.Setenv("REQUIRE_API_TOKEN", "true")
 	t.Setenv("API_TOKEN", "secret")
-	t.Setenv("ACTIVE_MODEL_CONFIG", "/path/that/does/not/exist")
+	t.Setenv("ACTIVE_MODEL_CONFIG", "")
 
 	cfg, err := Load(t.TempDir())
 	if err != nil {
@@ -75,6 +75,16 @@ func TestEnvSecurityOverrides(t *testing.T) {
 	}
 	if len(cfg.AllowedOrigins) != 2 || cfg.AllowedOrigins[0] != "https://app.example.com" {
 		t.Fatalf("AllowedOrigins = %#v", cfg.AllowedOrigins)
+	}
+}
+
+func TestLoadReturnsErrorForExplicitMissingModelConfig(t *testing.T) {
+	t.Setenv("ACTIVE_MODEL_CONFIG", "/path/that/does/not/exist")
+
+	_, err := Load(t.TempDir())
+
+	if err == nil {
+		t.Fatal("Load() error = nil, want explicit model config error")
 	}
 }
 

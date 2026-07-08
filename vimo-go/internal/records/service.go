@@ -62,6 +62,10 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]Record, error)
 	return s.repo.List(ctx, filter)
 }
 
+func (s *Service) Get(ctx context.Context, id string) (*Record, error) {
+	return s.repo.Get(ctx, strings.TrimSpace(id))
+}
+
 func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (*Record, error) {
 	record, err := s.repo.Get(ctx, id)
 	if err != nil {

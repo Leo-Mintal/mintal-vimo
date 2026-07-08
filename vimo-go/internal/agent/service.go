@@ -54,6 +54,20 @@ func (s *Service) ModelOptions() []ModelOption {
 }
 
 func (s *Service) Analyze(ctx context.Context, req AnalyzeRequest) (*Result, error) {
+	return s.AnalyzeWithHooks(ctx, req, AnalyzeHooks{})
+}
+
+type AnalyzeHooks struct {
+	OnAnalyzeStarted func()
+	OnModelRequested func()
+	OnModelCompleted func()
+	OnPreviewCreated func(*Result)
+}
+
+func (s *Service) AnalyzeWithHooks(ctx context.Context, req AnalyzeRequest, hooks AnalyzeHooks) (*Result, error) {
+	if hooks.OnAnalyzeStarted != nil {
+		hooks.OnAnalyzeStarted()
+	}
 	promptPayload, promptJSON, err := s.promptPayload(req)
 	if err != nil {
 		return nil, err
@@ -64,16 +78,23 @@ func (s *Service) Analyze(ctx context.Context, req AnalyzeRequest) (*Result, err
 		return nil, err
 	}
 	thinking := s.thinkingOptionsForRequest(req, providerKey)
+	if hooks.OnModelRequested != nil {
+		hooks.OnModelRequested()
+	}
 	resp, err := provider.Chat(ctx, llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: s.systemPrompt},
 			{Role: "user", Content: string(promptJSON)},
 		},
-		Thinking: thinking,
-		Stream:   false,
+		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		Thinking:       thinking,
+		Stream:         false,
 	})
 	if err != nil {
 		return nil, err
+	}
+	if hooks.OnModelCompleted != nil {
+		hooks.OnModelCompleted()
 	}
 
 	result, err := parseResult(resp.Content)
@@ -84,6 +105,9 @@ func (s *Service) Analyze(ctx context.Context, req AnalyzeRequest) (*Result, err
 	pending := pendingContextForResult(result, promptPayload.OpenContexts, req.PendingRecord)
 	normalizeResultWithTime(result, promptPayload.Message, pending, promptPayload.Now, promptPayload.Timezone)
 	result.Reasoning = reasoningForEnabledThinking(resp.Reasoning, thinking)
+	if hooks.OnPreviewCreated != nil {
+		hooks.OnPreviewCreated(result)
+	}
 	if strings.TrimSpace(result.Reply) == "" {
 		return nil, fmt.Errorf("agent reply is empty")
 	}
@@ -591,6 +615,7 @@ func normalizeResultWithTime(result *Result, original string, pending *ContextRe
 	mergePendingRecord(result, pending, original)
 	applyPendingDateContext(result, pending, nowText, timezone)
 	applyContentQuality(result, original)
+	normalizeClosedReminderFields(result)
 	result.ShouldPreview = shouldPreviewResult(result)
 	if result.Type == "unknown" && result.Status == "ready" && result.ShouldPreview {
 		result.Status = "need_confirmation"
@@ -613,7 +638,37 @@ func normalizeResultWithTime(result *Result, original string, pending *ContextRe
 	}
 	normalizeIntentStack(result)
 	applyHardStopGate(result, pending)
+	normalizeClosedReminderFields(result)
 	normalizeIntentTrace(result, pending)
+}
+
+func normalizeClosedReminderFields(result *Result) {
+	if !isClosedReminderUpdate(result) {
+		return
+	}
+	result.MissingFields = removeMissing(result.MissingFields, "need_reminder", "datetime")
+	if result.Status == "need_confirmation" && len(result.MissingFields) == 0 {
+		result.Status = "ready"
+	}
+}
+
+func isClosedReminderUpdate(result *Result) bool {
+	if result == nil || result.NeedReminder || result.Type != "todo" || result.RecordAction != "update" {
+		return false
+	}
+	if result.FieldRisk != nil && result.FieldRisk.NeedReminder == "high" {
+		return true
+	}
+	if result.FieldConfidence != nil && result.FieldConfidence.NeedReminder != nil {
+		return true
+	}
+	if hasAnyMissing(result.MissingFields, "need_reminder", "datetime") {
+		return true
+	}
+	if result.IntentTrace != nil && containsTraceToken(result.IntentTrace.GateReasons, "hard_stop_need_reminder_change") {
+		return true
+	}
+	return false
 }
 
 func applyPendingDateContext(result *Result, pending *ContextRecord, nowText string, timezone string) {
@@ -955,8 +1010,19 @@ func normalizeRecordCandidates(result *Result) {
 		candidate.Status = normalizeStatus(candidate.Status)
 		candidate.MissingFields = normalizeMissing(candidate.MissingFields)
 		candidate.RecordAction = normalizeRecordAction(candidate.RecordAction)
+		if index == 0 && isPendingContinuation(result.Intent) && result.RecordAction != "" && result.RecordAction != "none" {
+			candidate.RecordAction = result.RecordAction
+		}
 		candidate.TargetID = normalizeOptionalID(candidate.TargetID)
 		candidate.RelatedIDs = normalizeRelatedIDs(candidate.RelatedIDs)
+		if index == 0 && isPendingContinuation(result.Intent) {
+			if candidate.TargetID == nil {
+				candidate.TargetID = result.TargetID
+			}
+			if len(candidate.RelatedIDs) == 0 {
+				candidate.RelatedIDs = result.RelatedIDs
+			}
+		}
 		candidate.ExecutionDecision = normalizeExecutionDecision(candidate.ExecutionDecision)
 		if candidate.ExecutionDecision == "" {
 			candidate.ExecutionDecision = decisionForCandidate(candidate, index == 0)
@@ -1023,6 +1089,12 @@ func normalizeExecutionPlan(result *Result) {
 		}
 		item.Risk = normalizeRisk(item.Risk)
 		item.TargetID = normalizeOptionalID(item.TargetID)
+		if isPendingContinuation(result.Intent) && result.RecordAction != "" && result.RecordAction != "none" && executionItemTargetsPrimary(result, item) {
+			item.Action = result.RecordAction
+			if item.TargetID == nil {
+				item.TargetID = result.TargetID
+			}
+		}
 		if item.Decision == "auto_execute" && !executionItemTargetsPrimary(result, item) && !executionItemCanAutoExecuteSecondary(result, item) {
 			item.Decision = "preview"
 		}
@@ -1386,9 +1458,6 @@ func hardStopReasonsForResult(result *Result, pending *ContextRecord) []string {
 		return nil
 	}
 	reasons := []string{}
-	if result.RecordAction == "update" && !isPendingContinuation(result.Intent) && result.Type == "todo" && !result.NeedReminder && result.FieldRisk != nil && result.FieldRisk.NeedReminder == "high" {
-		reasons = append(reasons, "hard_stop_need_reminder_change")
-	}
 	if (result.RecordAction == "update" || result.RecordAction == "delete") && !isPendingContinuation(result.Intent) {
 		if result.TargetID == nil || len(result.RelatedIDs) > 1 {
 			reasons = append(reasons, "hard_stop_target_not_unique")
@@ -1680,11 +1749,21 @@ func normalizeContextAction(value string) string {
 }
 
 func normalizeRecordActionForIntent(result *Result, pending *ContextRecord) {
+	pendingAction := ""
+	if pending != nil {
+		pendingAction = normalizeRecordAction(pending.RecordAction)
+	}
 	switch result.Intent {
 	case "answer_query", "joke_response", "config_update":
 		result.RecordAction = "none"
-	case "update_record", "update_pending", "confirm_pending":
+	case "update_record":
 		result.RecordAction = "update"
+	case "update_pending", "confirm_pending":
+		if pendingAction != "" && pendingAction != "none" && shouldUsePendingAction(result, pendingAction) {
+			result.RecordAction = pendingAction
+		} else if result.RecordAction == "" {
+			result.RecordAction = "update"
+		}
 	case "delete_record":
 		result.RecordAction = "delete"
 	case "new_record":
@@ -1696,23 +1775,91 @@ func normalizeRecordActionForIntent(result *Result, pending *ContextRecord) {
 			result.RecordAction = "create"
 		}
 	}
+	if pending != nil && isPendingContinuation(result.Intent) {
+		if result.ContextTargetID == nil {
+			result.ContextTargetID = normalizeOptionalID(&pending.ID)
+		}
+		if len(result.RelatedIDs) == 0 {
+			result.RelatedIDs = normalizeRelatedIDs(pending.RelatedIDs)
+		}
+		if result.TargetID == nil && pending.TargetID != nil && canUsePendingTargetForAction(result) {
+			result.TargetID = pending.TargetID
+		}
+		clearPendingContextTargetForMultiDelete(result, pending)
+	}
 	if result.RecordAction == "update" || result.RecordAction == "delete" {
 		if result.TargetID == nil && len(result.RelatedIDs) == 1 {
 			result.TargetID = &result.RelatedIDs[0]
 		}
-		if result.TargetID == nil && result.ContextTargetID != nil && (result.Intent == "update_pending" || result.Intent == "confirm_pending") {
+		if result.TargetID == nil && result.ContextTargetID != nil && canUsePendingContextAsRecordTarget(result) {
 			result.TargetID = result.ContextTargetID
 		}
-		if result.TargetID == nil && pending != nil && (result.Intent == "update_pending" || result.Intent == "confirm_pending") {
+		if result.TargetID == nil && pending != nil && canUsePendingContextAsRecordTarget(result) {
 			result.TargetID = normalizeOptionalID(&pending.ID)
 		}
-		if result.TargetID == nil {
+		if result.TargetID == nil && targetMissingRequiresConfirmation(result) {
 			result.Status = "need_confirmation"
 		}
 	}
 	if result.RecordAction == "none" {
 		result.ShouldPreview = false
 	}
+}
+
+func clearPendingContextTargetForMultiDelete(result *Result, pending *ContextRecord) {
+	if result == nil || pending == nil || result.RecordAction != "delete" || !isPendingContinuation(result.Intent) || len(result.RelatedIDs) <= 1 || result.TargetID == nil {
+		return
+	}
+	target := strings.TrimSpace(*result.TargetID)
+	if target == "" || relatedIDsContain(result.RelatedIDs, target) {
+		return
+	}
+	if target == strings.TrimSpace(pending.ID) || (result.ContextTargetID != nil && target == strings.TrimSpace(*result.ContextTargetID)) {
+		result.TargetID = nil
+	}
+}
+
+func relatedIDsContain(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldUsePendingAction(result *Result, pendingAction string) bool {
+	if result == nil {
+		return false
+	}
+	return result.RecordAction == "" ||
+		result.RecordAction == "create" ||
+		(result.Intent == "confirm_pending" && pendingAction == "delete")
+}
+
+func canUsePendingTargetForAction(result *Result) bool {
+	if result == nil || !isPendingContinuation(result.Intent) {
+		return false
+	}
+	return result.RecordAction != "delete" || len(result.RelatedIDs) <= 1
+}
+
+func canUsePendingContextAsRecordTarget(result *Result) bool {
+	if result == nil || !isPendingContinuation(result.Intent) {
+		return false
+	}
+	if result.RecordAction == "delete" && len(result.RelatedIDs) > 1 {
+		return false
+	}
+	return true
+}
+
+func targetMissingRequiresConfirmation(result *Result) bool {
+	if result == nil || result.TargetID != nil {
+		return false
+	}
+	return result.RecordAction != "delete" || !isPendingContinuation(result.Intent) || len(result.RelatedIDs) <= 1
 }
 
 func normalizeContextTargetForIntent(result *Result) {

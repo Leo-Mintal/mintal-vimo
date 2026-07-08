@@ -632,46 +632,148 @@ option {
   line-height: 1.75;
 }
 
-.assistant-flow {
+.assistant-workflow {
   display: flex;
   width: min(100%, 720px);
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
-.assistant-flow-block {
-  border-left: 2px solid transparent;
-  padding-left: 10px;
+.agent-progress-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 8px;
+  color: var(--text-faint);
 }
 
-.assistant-flow-block[data-tone='thinking'] {
-  border-left-color: var(--border-subtle);
+.agent-progress-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 18px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 18px;
+}
+
+.agent-progress-icon {
+  display: grid;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  place-items: center;
+  color: var(--text-faint);
+}
+
+.agent-progress-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-faint);
+}
+
+.agent-progress-dot[data-status='running'] {
+  background: var(--accent);
+}
+
+.agent-progress-dot[data-status='completed'] {
+  background: var(--success);
+}
+
+.agent-progress-dot[data-status='warning'] {
+  background: var(--warning);
+}
+
+.agent-progress-dot[data-status='failed'] {
+  background: var(--danger);
+}
+
+.agent-progress-item[data-status='warning'] .agent-progress-title {
+  color: var(--warning);
+}
+
+.agent-progress-item[data-status='failed'] .agent-progress-title {
+  color: var(--danger);
+}
+
+.agent-progress-title {
   color: var(--text-muted);
 }
 
-.assistant-flow-block[data-tone='reply'] {
-  border-left-color: transparent;
+.agent-progress-detail {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--text-faint);
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-output {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.assistant-process-block {
+  width: min(100%, 720px);
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 8px;
+}
+
+.assistant-process-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 22px;
+  cursor: pointer;
+}
+
+.assistant-process-summary:disabled {
+  cursor: default;
+}
+
+.assistant-process-summary:hover {
   color: var(--text-strong);
 }
 
-.assistant-flow-label {
-  margin-bottom: 3px;
+.assistant-process-chevron {
   color: var(--text-faint);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0;
+  transition: transform 160ms ease;
 }
 
-.assistant-flow-text {
+.assistant-process-block[data-open='true'] .assistant-process-chevron {
+  transform: rotate(90deg);
+}
+
+.assistant-process-body {
+  padding: 6px 0 8px;
+}
+
+.assistant-process-thinking {
   white-space: pre-wrap;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.75;
+}
+
+.assistant-process-reply {
+  margin-top: 6px;
+  white-space: pre-wrap;
+  color: var(--text-strong);
   font-size: 13px;
   font-weight: 500;
   line-height: 1.7;
-}
-
-.assistant-flow-block[data-tone='thinking'] .assistant-flow-text {
-  font-size: 12px;
-  line-height: 1.75;
 }
 
 .vimo-thinking-sign {

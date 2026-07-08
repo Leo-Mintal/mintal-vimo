@@ -34,7 +34,7 @@ import { Composer } from './Composer';
 import { RecordCard } from '../RecordCard/RecordCard';
 import { listAgentModels, sendAgentMessageStream } from '../../services/agent';
 import { createRecord, listRecords, saveRecord, updateRecord, type RecordWriteInput } from '../../services/records';
-import type { AgentContextRecord, AgentIntent, AgentMessageResponse, AgentModelOption, ConversationMessage, CustomAgentModel, FieldRiskLevel, IntentItem, IntentTrace, PendingState, RecordAction, RecordCandidate, RecordPreview, RecordStatus, RecordType, ReplyPreset, ReplyProfile, RiskField, SettingsPatch, ThinkingPayload } from '../../types/agent';
+import type { AgentContextRecord, AgentIntent, AgentMessageResponse, AgentModelOption, AgentProgressEvent, AgentRecordExecutionEvent, ConversationMessage, CustomAgentModel, FieldRiskLevel, IntentItem, IntentTrace, PendingState, RecordAction, RecordCandidate, RecordPreview, RecordStatus, RecordType, ReplyPreset, ReplyProfile, RiskField, SettingsPatch, ThinkingPayload } from '../../types/agent';
 import type { RecordItem } from '../../types/record';
 
 interface Message {
@@ -47,6 +47,7 @@ interface Message {
   intent?: AgentIntent;
   pendingId?: string;
   preview?: RecordPreview;
+  progressEvents?: AgentProgressEvent[];
   thinking?: ThinkingPayload | null;
   thinkingStartedAt?: number;
   thinkingFinishedAt?: number;
@@ -381,22 +382,106 @@ export function ChatAgent() {
       const thinkingRequested = Boolean(request.thinking?.enabled);
       let finalResponse: AgentMessageResponse | null = null;
       let finalPreview: RecordPreview | null = null;
+      let serverRecordExecution: AgentRecordExecutionEvent | null = null;
       let fastTypingTask = Promise.resolve();
       let sequenceTask = Promise.resolve();
+      let pendingFastReplyText = '';
+      let fastDoneReceived = false;
       let slowThinkingReceived = false;
+      let lastProgressSeq = 0;
+      let pendingFastCompletedProgress: AgentProgressEvent | null = null;
+      let pendingRunCompletedProgress: AgentProgressEvent | null = null;
+      let fastCompletionFlushScheduled = false;
+      const isCurrentGeneration = () => !requestController.signal.aborted && generationTokenRef.current === generationToken;
+      const hasProgressType = (type: string) =>
+        assistantHasProgressType(assistantId, type) ||
+        pendingFastCompletedProgress?.type === type ||
+        pendingRunCompletedProgress?.type === type;
+      const fallbackProgressEvent = (type: string, title: string, payload?: Record<string, unknown>): AgentProgressEvent => {
+        lastProgressSeq += 1;
+        return {
+          id: `${turnId}-client-${lastProgressSeq}-${type}`,
+          turn_id: turnId,
+          seq: lastProgressSeq,
+          type,
+          title,
+          status: 'completed',
+          payload,
+          created_at: new Date().toISOString(),
+        };
+      };
+      const flushFastCompletedProgress = () => {
+        if (!pendingFastCompletedProgress || !isCurrentGeneration() || assistantHasProgressType(assistantId, pendingFastCompletedProgress.type)) {
+          pendingFastCompletedProgress = null;
+          return;
+        }
+        appendAssistantProgress(assistantId, pendingFastCompletedProgress);
+        pendingFastCompletedProgress = null;
+      };
+      const scheduleFastCompletedFlush = () => {
+        if (fastCompletionFlushScheduled) {
+          return;
+        }
+        fastCompletionFlushScheduled = true;
+        void fastTypingTask.finally(() => {
+          fastCompletionFlushScheduled = false;
+          flushFastCompletedProgress();
+        });
+      };
+      const queueProgress = (event: AgentProgressEvent) => {
+        if (event.type === 'fast_reply.completed') {
+          pendingFastCompletedProgress = event;
+          scheduleFastCompletedFlush();
+          return;
+        }
+        if (event.type === 'run.completed') {
+          pendingRunCompletedProgress = event;
+          return;
+        }
+        appendAssistantProgress(assistantId, event);
+      };
+      const queueFallbackProgress = (type: string, title: string, payload?: Record<string, unknown>) => {
+        if (hasProgressType(type)) {
+          return;
+        }
+        queueProgress(fallbackProgressEvent(type, title, payload));
+      };
+      const flushRunCompletedProgress = () => {
+        if (!pendingRunCompletedProgress || !isCurrentGeneration() || assistantHasProgressType(assistantId, pendingRunCompletedProgress.type)) {
+          pendingRunCompletedProgress = null;
+          return;
+        }
+        appendAssistantProgress(assistantId, pendingRunCompletedProgress);
+        pendingRunCompletedProgress = null;
+      };
+      const flushFastReplyText = () => {
+        const text = pendingFastReplyText;
+        pendingFastReplyText = '';
+        if (text) {
+          sequenceTask = sequenceTask.then(async () => {
+            await typeAssistantDelta(assistantId, 'fast', text, generationToken);
+          });
+        }
+        fastTypingTask = sequenceTask;
+      };
       const completeGenerationFromServerDone = async () => {
+        if (pendingFastReplyText) {
+          flushFastReplyText();
+        }
         await sequenceTask;
         await fastTypingTask;
         if (requestController.signal.aborted || generationTokenRef.current !== generationToken) {
           return;
         }
+        flushFastCompletedProgress();
         setThinking(false);
         if (finalResponse && finalPreview) {
-          await streamAssistantFinalText(assistantId, finalResponse.message.content, generationToken);
+          const finalContent = visibleFinalText(assistantId, finalResponse.message.content);
+          await streamAssistantFinalText(assistantId, finalContent, generationToken);
           if (requestController.signal.aborted || generationTokenRef.current !== generationToken) {
             return;
           }
-          const pendingId = await applyAgentPreview(finalPreview, latestOpenContext?.id ?? latestPending?.id ?? null, content, finalResponse.message.content);
+          const pendingId = await applyAgentPreview(finalPreview, latestOpenContext?.id ?? latestPending?.id ?? null, content, finalResponse.message.content, serverRecordExecution);
           updateAssistantMessage(assistantId, {
             intent: finalPreview.intent,
             pendingId,
@@ -411,6 +496,7 @@ export function ChatAgent() {
           return;
         }
         finishAssistantThinking(assistantId);
+        flushRunCompletedProgress();
         doneReceived = true;
       };
 
@@ -418,12 +504,24 @@ export function ChatAgent() {
         if (requestController.signal.aborted || generationTokenRef.current !== generationToken) {
           return;
         }
+        if (event.type === 'progress') {
+          lastProgressSeq = Math.max(lastProgressSeq, event.event.seq);
+          queueProgress(event.event);
+        }
+        if (event.type === 'record_execution') {
+          serverRecordExecution = event.event;
+          applyServerRecordExecution(event.event);
+        }
         if (event.type === 'fast_delta') {
-          const delta = event.delta;
-          sequenceTask = sequenceTask.then(async () => {
-            await typeAssistantDelta(assistantId, 'fast', delta, generationToken);
-          });
-          fastTypingTask = sequenceTask;
+          pendingFastReplyText += event.delta;
+          if (fastDoneReceived) {
+            flushFastReplyText();
+          }
+        }
+        if (event.type === 'fast_done') {
+          fastDoneReceived = true;
+          flushFastReplyText();
+          queueFallbackProgress('fast_reply.completed', '快路已完成', { route: event.route ?? 'continue_slow' });
         }
         if (event.type === 'fast_thinking' && thinkingRequested) {
           sequenceTask = sequenceTask.then(async () => {
@@ -450,6 +548,7 @@ export function ChatAgent() {
           throw new Error(event.message);
         }
         if (event.type === 'done') {
+          queueFallbackProgress('run.completed', '本轮已完成');
           await completeGenerationFromServerDone();
         }
       }, requestController.signal);
@@ -524,6 +623,26 @@ export function ChatAgent() {
     mutateMessages((current) => current.map((message) => (message.id === messageId ? { ...message, ...patch } : message)));
   }
 
+  function appendAssistantProgress(messageId: string, event: AgentProgressEvent) {
+    mutateMessages((current) =>
+      current.map((message) => {
+        if (message.id !== messageId) {
+          return message;
+        }
+        const progressEvents = mergeProgressEvent(message.progressEvents ?? [], event);
+        return {
+          ...message,
+          progressEvents,
+        };
+      }),
+    );
+  }
+
+  function assistantHasProgressType(messageId: string, type: string) {
+    const message = messagesRef.current.find((item) => item.id === messageId);
+    return Boolean(message?.progressEvents?.some((event) => event.type === type));
+  }
+
   function beginAssistantThinkingStream(messageId: string) {
     mutateMessages((current) =>
       current.map((message) => {
@@ -587,6 +706,29 @@ export function ChatAgent() {
     await typeAssistantDelta(messageId, 'slow', text, generationToken);
   }
 
+  function visibleFinalText(messageId: string, finalText: string) {
+    const text = finalText.trim();
+    if (!text) {
+      return '';
+    }
+    const fast = messageFastContentById(messageId).trim();
+    if (!fast) {
+      return text;
+    }
+    if (text === fast) {
+      return '';
+    }
+    if (text.startsWith(fast)) {
+      return text.slice(fast.length).trimStart();
+    }
+    return text;
+  }
+
+  function messageFastContentById(messageId: string) {
+    const message = messagesRef.current.find((item) => item.id === messageId);
+    return message?.fastContent ?? '';
+  }
+
   function messageSlowContentById(messageId: string) {
     const message = messagesRef.current.find((item) => item.id === messageId);
     return message?.slowContent ?? '';
@@ -632,7 +774,13 @@ export function ChatAgent() {
     }
   }
 
-  async function applyAgentPreview(preview: RecordPreview, activeContextPendingId: string | null, userContent: string, assistantContent: string) {
+  async function applyAgentPreview(
+    preview: RecordPreview,
+    activeContextPendingId: string | null,
+    userContent: string,
+    assistantContent: string,
+    serverExecution?: AgentRecordExecutionEvent | null,
+  ) {
     const taskId = taskIdForPreview(preview, activeContextPendingId) ?? (shouldOpenTaskContext(preview) ? createId() : null);
     const previewWithTask = taskId ? previewWithTaskId(preview, taskId) : preview;
     syncOpenContext(previewWithTask, taskId, userContent, assistantContent);
@@ -649,6 +797,14 @@ export function ChatAgent() {
       return undefined;
     }
     if (!shouldShowPreview(previewWithTask)) {
+      return undefined;
+    }
+    if (serverExecution?.status === 'completed' && serverExecution.action !== 'none') {
+      if (taskId) {
+        closeTaskContext(taskId);
+      }
+      addNotice(noticeForAppliedAction(serverExecution.action));
+      await addNonAutoCandidates(previewWithTask, taskId, serverExecution);
       return undefined;
     }
     if (shouldAutoSavePreview(previewWithTask, records, taskId, riskFeedback)) {
@@ -699,7 +855,7 @@ export function ChatAgent() {
     return applied;
   }
 
-  async function addNonAutoCandidates(preview: RecordPreview, taskId: string | null) {
+  async function addNonAutoCandidates(preview: RecordPreview, taskId: string | null, serverExecution?: AgentRecordExecutionEvent | null) {
     const candidates = secondaryPreviewsFromCandidates(preview, taskId);
     if (!candidates.length) {
       return;
@@ -707,6 +863,9 @@ export function ChatAgent() {
     const pendingCandidates: PendingPreviewItem[] = [];
     const appliedActions: AppliedAction[] = [];
     for (const item of candidates) {
+      if (serverExecution?.status === 'completed' && item.id === taskId) {
+        continue;
+      }
       if (shouldAutoSavePreview(item.preview, records, item.id, riskFeedback)) {
         const applied = await applyRecordAction(item.preview, item.id);
         if (applied !== 'none') {
@@ -736,6 +895,21 @@ export function ChatAgent() {
     });
   }
 
+  function applyServerRecordExecution(event: AgentRecordExecutionEvent) {
+    if (event.status !== 'completed' || event.action === 'none') {
+      return;
+    }
+    const record = normalizeRecordFromUnknown(event.record);
+    if (!record) {
+      return;
+    }
+    if (event.action === 'created') {
+      upsertLocalRecord(record);
+      return;
+    }
+    updateLocalRecord(record);
+  }
+
   async function handleSavePending(pendingId: string, preview: RecordPreview) {
     const previous = pendingPreviews.find((item) => item.id === pendingId)?.preview;
     const applied = await applyRecordAction(preview, pendingId);
@@ -762,17 +936,24 @@ export function ChatAgent() {
       return 'none';
     }
     if (action === 'delete') {
-      const targetId = preview.target_id ?? preview.related_ids?.[0] ?? null;
-      if (!targetId) {
+      const targetIds = deleteTargetIds(preview);
+      if (!targetIds.length) {
         return 'none';
       }
-      const target = records.find((record) => record.id === targetId);
-      if (target) {
+      let appliedCount = 0;
+      for (const targetId of targetIds) {
+        const target = records.find((record) => record.id === targetId && record.status !== 'discarded');
+        if (!target) {
+          continue;
+        }
         const deleted = await updateRecord(target.id, softDeletePatch(target));
         updateLocalRecord(normalizeRecordItem(deleted));
+        appliedCount += 1;
+      }
+      if (appliedCount > 0) {
         return 'deleted';
       }
-      if (targetId === pendingContextId) {
+      if (pendingContextId && targetIds.includes(pendingContextId)) {
         return 'deleted';
       }
       return 'none';
@@ -1053,6 +1234,7 @@ export function ChatAgent() {
                         beforeContent={message.role === 'assistant' && message.preview ? <IntentStackPanel preview={message.preview} onOpenPending={setActivePendingId} /> : undefined}
                         content={message.content}
                         fastContent={message.role === 'assistant' ? message.fastContent : undefined}
+                        progressEvents={message.role === 'assistant' ? message.progressEvents : undefined}
                         slowContent={message.role === 'assistant' ? message.slowContent : undefined}
                         thinking={message.role === 'assistant' ? message.thinking : undefined}
                         onCopy={() => copyText(message.content)}
@@ -2353,7 +2535,7 @@ function countByTab(records: RecordItem[], tab: RecordTab) {
 }
 
 function isScheduledTodo(record: RecordItem) {
-  return record.status !== 'discarded' && record.type === 'todo' && (record.need_reminder || Boolean(record.datetime_iso));
+  return record.status !== 'discarded' && record.type === 'todo' && record.need_reminder;
 }
 
 function createEmptyDraft(type: RecordType = 'todo'): RecordDraft {
@@ -2395,18 +2577,19 @@ function recordPatchFromDraft(draft: RecordDraft): Partial<RecordWriteInput> {
   };
 }
 
-function previewPatch(preview: RecordPreview, record: RecordItem): Partial<RecordWriteInput> {
+export function previewPatch(preview: RecordPreview, record: RecordItem): Partial<RecordWriteInput> {
   const status = preview.status === 'ready' ? 'saved' : preview.status;
+  const shouldKeepExistingDatetime = preview.datetime_text === null && preview.datetime_iso === null;
   return {
     type: preview.type,
     title: preview.title,
     content: preview.content,
-    datetime_text: preview.datetime_text,
-    datetime_iso: preview.datetime_iso,
+    datetime_text: shouldKeepExistingDatetime ? record.datetime_text : preview.datetime_text,
+    datetime_iso: shouldKeepExistingDatetime ? record.datetime_iso : preview.datetime_iso,
     need_reminder: preview.need_reminder,
     confidence: preview.confidence,
     status,
-    missing_fields: preview.status === 'ready' ? [] : preview.missing_fields,
+    missing_fields: normalizedMissingFields(preview),
     deleted_at: status === 'discarded' ? record.deleted_at ?? formatLocalTimestamp() : '',
     previous_status: status === 'discarded' ? record.previous_status ?? 'saved' : '',
   };
@@ -2458,7 +2641,7 @@ function inferContextAction(preview: RecordPreview): 'open' | 'update' | 'close'
   return 'none';
 }
 
-function openContextFromPreview(
+export function openContextFromPreview(
   preview: RecordPreview,
   id: string,
   now: string,
@@ -2469,7 +2652,7 @@ function openContextFromPreview(
     id,
     preview: {
       ...preview,
-      target_id: preview.target_id ?? id,
+      target_id: targetIdForTaskContext(preview, id),
       context_target_id: preview.context_target_id ?? id,
     },
     created_at: now,
@@ -2477,6 +2660,14 @@ function openContextFromPreview(
     last_user_message: userContent,
     last_assistant_reply: assistantContent,
   };
+}
+
+export function targetIdForTaskContext(preview: RecordPreview, taskId: string) {
+  const action = preview.record_action ?? defaultRecordAction(preview);
+  if (action === 'delete' && (preview.related_ids ?? []).length > 1) {
+    return preview.target_id && preview.related_ids?.includes(preview.target_id) ? preview.target_id : null;
+  }
+  return preview.target_id ?? taskId;
 }
 
 export function mergeOpenContextPreview(current: RecordPreview, next: RecordPreview): RecordPreview {
@@ -2499,10 +2690,29 @@ export function mergeOpenContextPreview(current: RecordPreview, next: RecordPrev
     execution_plan: next.execution_plan ?? current.execution_plan,
     reply_strategy: next.reply_strategy ?? current.reply_strategy,
     intent_trace: next.intent_trace ?? current.intent_trace,
-    related_ids: next.related_ids ?? current.related_ids,
-    target_id: next.target_id ?? next.context_target_id ?? current.target_id ?? current.context_target_id,
+    related_ids: mergedPreviewRelatedIds(current, next),
+    target_id: mergedPreviewTargetId(current, next),
     context_target_id: next.context_target_id ?? next.target_id ?? current.context_target_id ?? current.target_id,
   };
+}
+
+export function mergedPreviewTargetId(current: RecordPreview, next: RecordPreview) {
+  const action = next.record_action ?? current.record_action ?? defaultRecordAction(next);
+  if (action === 'delete' && mergedPreviewRelatedIds(current, next).length > 1) {
+    return next.target_id ?? current.target_id ?? null;
+  }
+  return next.target_id ?? next.context_target_id ?? current.target_id ?? current.context_target_id;
+}
+
+function mergedPreviewRelatedIds(current: RecordPreview, next: RecordPreview) {
+  const action = next.record_action ?? current.record_action ?? defaultRecordAction(next);
+  if (action === 'delete' && (current.related_ids ?? []).length > 1 && Array.isArray(next.related_ids) && next.related_ids.length === 0) {
+    return current.related_ids ?? [];
+  }
+  if (Array.isArray(next.related_ids) && next.related_ids.length > 0) {
+    return next.related_ids;
+  }
+  return next.related_ids ?? current.related_ids ?? [];
 }
 
 function secondaryPreviewsFromCandidates(preview: RecordPreview, activeTaskId: string | null): PendingPreviewItem[] {
@@ -2608,8 +2818,18 @@ function assistantHasVisibleContent(message: Message) {
       message.slowContent?.trim() ||
       message.thinking?.fast?.trim() ||
       message.thinking?.slow?.trim() ||
+      message.progressEvents?.length ||
       message.preview,
   );
+}
+
+function mergeProgressEvent(current: AgentProgressEvent[], event: AgentProgressEvent) {
+  const key = event.id || `${event.turn_id}:${event.seq}:${event.type}`;
+  const withoutSame = current.filter((item) => {
+    const itemKey = item.id || `${item.turn_id}:${item.seq}:${item.type}`;
+    return itemKey !== key;
+  });
+  return [...withoutSame, event].sort((a, b) => a.seq - b.seq).slice(-12);
 }
 
 function contextRecordFromPendingPreview(item: PendingPreviewItem): AgentContextRecord {
@@ -2793,15 +3013,34 @@ function confirmedPendingPreview(preview: RecordPreview, taskId: string | null, 
 }
 
 export function mergePendingPreview(pending: RecordPreview, update: RecordPreview, targetId: string): RecordPreview {
-  return {
+  const recordAction = recordActionForPendingMerge(pending, update);
+  const merged: RecordPreview = {
     ...mergeOpenContextPreview(pending, update),
     status: 'ready',
     missing_fields: [],
     context_target_id: targetId,
-    target_id: update.target_id ?? pending.target_id ?? targetId,
-    record_action: update.record_action ?? pending.record_action,
+    record_action: recordAction,
     intent: update.intent ?? pending.intent,
+    related_ids: mergedPendingRelatedIds(pending, update, recordAction),
   };
+  return {
+    ...merged,
+    target_id: targetIdForTaskContext(merged, targetId),
+  };
+}
+
+function recordActionForPendingMerge(pending: RecordPreview, update: RecordPreview): RecordAction | undefined {
+  if (pending.record_action === 'delete' && (update.intent === 'confirm_pending' || update.intent === 'update_pending')) {
+    return 'delete';
+  }
+  return update.record_action ?? pending.record_action;
+}
+
+function mergedPendingRelatedIds(pending: RecordPreview, update: RecordPreview, action?: RecordAction) {
+  if (action === 'delete' && (pending.related_ids ?? []).length > 1 && (!update.related_ids || update.related_ids.length === 0)) {
+    return pending.related_ids;
+  }
+  return update.related_ids ?? pending.related_ids;
 }
 
 function shouldOpenTaskContext(preview: RecordPreview) {
@@ -2817,7 +3056,7 @@ function previewWithTaskId(preview: RecordPreview, taskId: string): RecordPrevie
   }
   return {
     ...preview,
-    target_id: preview.target_id ?? taskId,
+    target_id: targetIdForTaskContext(preview, taskId),
     context_target_id: preview.context_target_id ?? taskId,
   };
 }
@@ -2885,8 +3124,9 @@ function hasBlockingHardStopGate(preview: RecordPreview) {
     preview.intent_trace?.gate_reasons?.some((reason) => {
       switch (reason) {
         case 'hard_stop_target_not_unique':
-        case 'hard_stop_need_reminder_change':
           return action === 'update' || action === 'delete';
+        case 'hard_stop_need_reminder_change':
+          return false;
         case 'hard_stop_ambiguous_reminder_time':
           return preview.need_reminder && !preview.datetime_iso;
         case 'hard_stop_sensitive_memory':
@@ -3161,10 +3401,18 @@ function writeStoredMessages(messages: Message[]) {
     return;
   }
   try {
-    window.localStorage.setItem(chatMessagesKey, JSON.stringify(messages.slice(-80)));
+    window.localStorage.setItem(chatMessagesKey, JSON.stringify(messages.slice(-80).map(messageForStorage)));
   } catch {
     // Chat history is local-only and best effort.
   }
+}
+
+function messageForStorage(message: Message): Message {
+  if (message.role !== 'assistant') {
+    return message;
+  }
+  const { thinking: _thinking, thinkingStartedAt: _thinkingStartedAt, thinkingFinishedAt: _thinkingFinishedAt, thinkingOpen: _thinkingOpen, ...rest } = message;
+  return rest;
 }
 
 function normalizeStoredMessage(value: unknown): Message | null {
@@ -3176,10 +3424,9 @@ function normalizeStoredMessage(value: unknown): Message | null {
     return null;
   }
   const createdAt = typeof item.createdAt === 'string' ? formatDisplayTimestamp(item.createdAt) : formatLocalTimestamp();
-  const thinking = normalizeThinkingPayload(item.thinking);
-  const fallbackThinkingTime = timestampValue(createdAt) || undefined;
   const fastContent = typeof item.fastContent === 'string' ? item.fastContent : undefined;
   const slowContent = typeof item.slowContent === 'string' ? item.slowContent : item.role === 'assistant' && !fastContent ? item.content : undefined;
+  const progressEvents = normalizeProgressEvents(item.progressEvents);
   return {
     id: item.id,
     role: item.role,
@@ -3190,10 +3437,11 @@ function normalizeStoredMessage(value: unknown): Message | null {
     intent: isAgentIntent(item.intent) ? item.intent : undefined,
     pendingId: typeof item.pendingId === 'string' ? item.pendingId : undefined,
     preview: item.preview ? normalizePreview(item.preview) : undefined,
-    thinking,
-    thinkingFinishedAt: typeof item.thinkingFinishedAt === 'number' ? item.thinkingFinishedAt : thinking ? fallbackThinkingTime : undefined,
+    progressEvents,
+    thinking: null,
+    thinkingFinishedAt: undefined,
     thinkingOpen: false,
-    thinkingStartedAt: typeof item.thinkingStartedAt === 'number' ? item.thinkingStartedAt : thinking ? fallbackThinkingTime : undefined,
+    thinkingStartedAt: undefined,
   };
 }
 
@@ -3356,6 +3604,10 @@ function normalizeStoredRecord(value: unknown): RecordItem | null {
   };
 }
 
+function normalizeRecordFromUnknown(value: unknown): RecordItem | null {
+  return normalizeStoredRecord(value);
+}
+
 function normalizeStoredPreview(value: unknown): RecordPreview | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -3372,7 +3624,7 @@ export function normalizePreview(preview: Partial<RecordPreview>): RecordPreview
   const primaryCandidate = primaryRecordCandidate(recordCandidates);
   const fieldConfidence = normalizeFieldConfidence(preview.field_confidence) ?? primaryCandidate?.field_confidence ?? null;
   const fieldRisk = normalizeFieldRisk(preview.field_risk) ?? primaryCandidate?.field_risk ?? null;
-  return {
+  const normalized: RecordPreview = {
     ...preview,
     type: isRecordType(preview.type) && preview.type !== 'unknown' ? preview.type : primaryCandidate?.type ?? 'unknown',
     title: typeof preview.title === 'string' && preview.title.trim() ? preview.title : primaryCandidate?.title ?? fallbackTitle('unknown', preview.content ?? ''),
@@ -3403,6 +3655,51 @@ export function normalizePreview(preview: Partial<RecordPreview>): RecordPreview
     reply_strategy: preview.reply_strategy && typeof preview.reply_strategy === 'object' ? preview.reply_strategy : null,
     intent_trace: normalizeIntentTrace(preview.intent_trace),
   };
+  return normalizeReminderClosedPreview(normalized);
+}
+
+function normalizeReminderClosedPreview(preview: RecordPreview): RecordPreview {
+  if (!isClosedReminderUpdatePreview(preview)) {
+    return {
+      ...preview,
+      missing_fields: normalizedMissingFields(preview),
+    };
+  }
+  const missing_fields = normalizedMissingFields(preview);
+  const status = preview.status === 'need_confirmation' && missing_fields.length === 0 ? 'ready' : preview.status;
+  return {
+    ...preview,
+    missing_fields,
+    status,
+  };
+}
+
+function isClosedReminderUpdatePreview(preview: Pick<RecordPreview, 'type' | 'record_action' | 'intent' | 'need_reminder' | 'missing_fields' | 'field_confidence' | 'field_risk' | 'intent_trace'>) {
+  if (preview.need_reminder || preview.type !== 'todo') {
+    return false;
+  }
+  const action = preview.record_action ?? defaultRecordAction(preview as RecordPreview);
+  if (action !== 'update') {
+    return false;
+  }
+  if (preview.field_risk?.need_reminder === 'high' || typeof preview.field_confidence?.need_reminder === 'number') {
+    return true;
+  }
+  if (preview.missing_fields?.some((field) => field === 'need_reminder' || field === 'datetime')) {
+    return true;
+  }
+  return Boolean(preview.intent_trace?.gate_reasons?.includes('hard_stop_need_reminder_change'));
+}
+
+function normalizedMissingFields(preview: Pick<RecordPreview, 'missing_fields' | 'need_reminder' | 'status'>) {
+  const fields = Array.isArray(preview.missing_fields) ? preview.missing_fields.filter((field): field is string => typeof field === 'string') : [];
+  if (preview.status === 'ready') {
+    return [];
+  }
+  if (!preview.need_reminder) {
+    return fields.filter((field) => field !== 'need_reminder' && field !== 'datetime');
+  }
+  return fields;
 }
 
 function primaryRecordCandidate(candidates: RecordCandidate[]) {
@@ -3575,6 +3872,46 @@ function normalizeThinkingPayload(value: unknown): ThinkingPayload | null {
   };
 }
 
+function normalizeProgressEvents(value: unknown): AgentProgressEvent[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const events = value
+    .map(normalizeProgressEvent)
+    .filter((event): event is AgentProgressEvent => Boolean(event))
+    .sort((a, b) => a.seq - b.seq)
+    .slice(-12);
+  return events.length ? events : undefined;
+}
+
+function normalizeProgressEvent(value: unknown): AgentProgressEvent | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const source = value as Partial<AgentProgressEvent>;
+  const type = typeof source.type === 'string' ? source.type.trim() : '';
+  const title = typeof source.title === 'string' ? source.title.trim() : '';
+  if (!type || !title) {
+    return null;
+  }
+  const seq = typeof source.seq === 'number' && Number.isFinite(source.seq) ? source.seq : 0;
+  return {
+    id: typeof source.id === 'string' ? source.id : `${type}-${seq}`,
+    turn_id: typeof source.turn_id === 'string' ? source.turn_id : '',
+    seq,
+    type,
+    title,
+    detail: typeof source.detail === 'string' && source.detail.trim() ? source.detail.trim() : undefined,
+    status: isProgressStatus(source.status) ? source.status : 'completed',
+    payload: source.payload,
+    created_at: typeof source.created_at === 'string' ? source.created_at : new Date().toISOString(),
+  };
+}
+
+function isProgressStatus(value: unknown): value is AgentProgressEvent['status'] {
+  return value === 'running' || value === 'completed' || value === 'warning' || value === 'failed';
+}
+
 function timestampValue(value?: string | null) {
   if (!value) {
     return 0;
@@ -3741,7 +4078,7 @@ function normalizeRecordCandidate(value: unknown): RecordCandidate | null {
   if (typeof item.content !== 'string') {
     return null;
   }
-  return {
+  const candidate: RecordCandidate = {
     id: typeof item.id === 'string' ? item.id : undefined,
     intent_id: typeof item.intent_id === 'string' ? item.intent_id : undefined,
     type: isRecordType(item.type) ? item.type : 'unknown',
@@ -3762,6 +4099,24 @@ function normalizeRecordCandidate(value: unknown): RecordCandidate | null {
     should_preview: item.should_preview !== false,
     primary: Boolean(item.primary),
   };
+  if (isClosedReminderCandidate(candidate)) {
+    candidate.missing_fields = candidate.missing_fields.filter((field) => field !== 'need_reminder' && field !== 'datetime');
+    if (candidate.status === 'need_confirmation' && candidate.missing_fields.length === 0) {
+      candidate.status = 'ready';
+    }
+  }
+  return candidate;
+}
+
+function isClosedReminderCandidate(candidate: RecordCandidate) {
+  if (candidate.need_reminder || candidate.type !== 'todo' || candidate.record_action !== 'update') {
+    return false;
+  }
+  return (
+    candidate.field_risk?.need_reminder === 'high' ||
+    typeof candidate.field_confidence?.need_reminder === 'number' ||
+    candidate.missing_fields.some((field) => field === 'need_reminder' || field === 'datetime')
+  );
 }
 
 function isAgentIntent(value: unknown): value is AgentIntent {

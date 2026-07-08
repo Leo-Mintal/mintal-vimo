@@ -1,4 +1,4 @@
-import { buildClosedContextPayload, mergePendingPreview, normalizePreview, passesRiskMatrix, sanitizeSettingsPatch, shouldAutoSavePreview } from './ChatAgent';
+import { buildClosedContextPayload, mergeOpenContextPreview, mergePendingPreview, normalizePreview, openContextFromPreview, passesRiskMatrix, previewPatch, sanitizeSettingsPatch, shouldAutoSavePreview, targetIdForTaskContext } from './ChatAgent';
 import type { AgentModelOption, RecordPreview } from '../../types/agent';
 import type { RecordItem } from '../../types/record';
 
@@ -44,8 +44,8 @@ assert(
 const manyRecords: RecordItem[] = Array.from({ length: 35 }, (_, index) => ({
   ...basePreview,
   id: `rec_${index}`,
-  created_at: `2026-07-${String(index + 1).padStart(2, '0')} 10:00:00`,
-  updated_at: `2026-07-${String(index + 1).padStart(2, '0')} 10:00:00`,
+  created_at: timestampForIndex(index),
+  updated_at: timestampForIndex(index),
   deleted_at: null,
   previous_status: null,
 }));
@@ -181,6 +181,69 @@ assert(previewWithPrimaryCandidateTime.need_reminder, 'normalizePreview should s
 assert(previewWithPrimaryCandidateTime.datetime_text === '十点', 'normalizePreview should seed time text from primary candidate');
 assert(previewWithPrimaryCandidateTime.datetime_iso === '2026-07-03 22:00:00', 'normalizePreview should seed datetime from primary candidate');
 
+const closedReminderUpdate = normalizePreview({
+  ...basePreview,
+  type: 'todo',
+  title: '吃早餐',
+  content: '吃早餐',
+  need_reminder: false,
+  datetime_text: '明早九点',
+  datetime_iso: '2026-07-08 09:00:00',
+  status: 'need_confirmation',
+  missing_fields: ['need_reminder'],
+  intent: 'update_record',
+  record_action: 'update',
+  target_id: 'rec_breakfast',
+  field_confidence: {
+    type: 0.95,
+    content: 0.95,
+    need_reminder: 0.98,
+    target: 0.95,
+  },
+  field_risk: {
+    type: 'low',
+    content: 'low',
+    need_reminder: 'high',
+    target: 'high',
+  },
+  intent_trace: {
+    gate_reasons: ['hard_stop_need_reminder_change'],
+  },
+});
+assert(closedReminderUpdate.status === 'ready', 'closed reminder update should become ready once reminder choice is explicit');
+assert(closedReminderUpdate.missing_fields.length === 0, 'closed reminder update should not keep need_reminder as missing');
+assert(
+  shouldAutoSavePreview(
+    closedReminderUpdate,
+    [{ ...basePreview, type: 'todo', id: 'rec_breakfast', created_at: '', updated_at: '', deleted_at: null, previous_status: null }],
+    null,
+    { accepted: {}, changed: {} },
+  ),
+  'closed reminder update with a clear target should auto-save',
+);
+const closedReminderPatch = previewPatch(
+  {
+    ...closedReminderUpdate,
+    datetime_text: null,
+    datetime_iso: null,
+  },
+  {
+    ...basePreview,
+    type: 'todo',
+    id: 'rec_breakfast',
+    datetime_text: '明早九点',
+    datetime_iso: '2026-07-08 09:00:00',
+    need_reminder: true,
+    created_at: '',
+    updated_at: '',
+    deleted_at: null,
+    previous_status: null,
+  },
+);
+assert(closedReminderPatch.datetime_text === '明早九点', 'closed reminder patch should preserve existing time text when preview omits it');
+assert(closedReminderPatch.datetime_iso === '2026-07-08 09:00:00', 'closed reminder patch should preserve existing datetime when preview omits it');
+assert(closedReminderPatch.need_reminder === false, 'closed reminder patch should still turn off reminder');
+
 assert(
   shouldAutoSavePreview(
     {
@@ -281,6 +344,107 @@ assert(
     { accepted: {}, changed: {} },
   ),
   'autosave should still block delete when target confidence is low',
+);
+
+const multiTargetDeletePreview = normalizePreview({
+  ...basePreview,
+  type: 'todo',
+  title: '删除剩余的早餐记录',
+  content: '删除剩余的早餐记录',
+  intent: 'confirm_pending',
+  record_action: 'delete',
+  target_id: null,
+  context_target_id: 'pending_delete_breakfast',
+  related_ids: ['rec_breakfast_today', 'rec_breakfast_yesterday'],
+  status: 'ready',
+  missing_fields: [],
+  field_confidence: {
+    type: 0.95,
+    content: 0.95,
+    target: 0.95,
+  },
+  field_risk: {
+    type: 'low',
+    content: 'low',
+    target: 'high',
+  },
+  record_candidates: [
+    {
+      id: 'candidate_delete_breakfast',
+      intent_id: 'intent_primary',
+      type: 'todo',
+      title: '删除剩余的早餐记录',
+      content: '删除剩余的早餐记录',
+      datetime_text: null,
+      datetime_iso: null,
+      need_reminder: false,
+      confidence: 0.95,
+      field_confidence: {
+        type: 0.95,
+        content: 0.95,
+        target: 0.95,
+      },
+      field_risk: {
+        type: 'low',
+        content: 'low',
+        target: 'high',
+      },
+      status: 'ready',
+      missing_fields: [],
+      record_action: 'delete',
+      target_id: null,
+      related_ids: ['rec_breakfast_today', 'rec_breakfast_yesterday'],
+      execution_decision: 'pending',
+      should_preview: true,
+      primary: true,
+    },
+  ],
+});
+assert(multiTargetDeletePreview.record_action === 'delete', 'pending delete preview should preserve delete action');
+assert(multiTargetDeletePreview.target_id === null, 'multi-target pending delete should not synthesize a record target id');
+assert(
+  targetIdForTaskContext(multiTargetDeletePreview, 'pending_delete_breakfast') === null,
+  'task context id should not be reused as record target for multi-target delete',
+);
+const deleteOpenContext = openContextFromPreview(multiTargetDeletePreview, 'pending_delete_breakfast', '', '', '');
+assert(deleteOpenContext.preview.target_id === null, 'open context should keep multi-target delete target null');
+assert(deleteOpenContext.preview.context_target_id === 'pending_delete_breakfast', 'open context should still keep the pending context id');
+const mergedDeleteContext = mergeOpenContextPreview(deleteOpenContext.preview, {
+  ...multiTargetDeletePreview,
+  target_id: null,
+  context_target_id: 'pending_delete_breakfast',
+});
+assert(mergedDeleteContext.target_id === null, 'merged multi-target delete context should not use context id as record target');
+const mergedPendingDelete = mergePendingPreview(
+  multiTargetDeletePreview,
+  {
+    ...basePreview,
+    intent: 'confirm_pending',
+    record_action: 'create',
+    target_id: null,
+    related_ids: [],
+    status: 'ready',
+    missing_fields: [],
+  },
+  'pending_delete_breakfast',
+);
+assert(mergedPendingDelete.record_action === 'delete', 'confirmed pending delete should keep delete action');
+assert(mergedPendingDelete.target_id === null, 'confirmed multi-target delete should not use pending id as record target');
+assert(
+  mergedPendingDelete.related_ids?.length === 2,
+  'confirmed pending delete should keep original related delete targets',
+);
+assert(
+  !shouldAutoSavePreview(
+    multiTargetDeletePreview,
+    [
+      { ...basePreview, id: 'rec_breakfast_today', created_at: '', updated_at: '', deleted_at: null, previous_status: null },
+      { ...basePreview, id: 'rec_breakfast_yesterday', created_at: '', updated_at: '', deleted_at: null, previous_status: null },
+    ],
+    'pending_delete_breakfast',
+    { accepted: {}, changed: {} },
+  ),
+  'multi-target pending delete should not autosave as a created or updated todo',
 );
 
 assert(
@@ -410,4 +574,8 @@ function assert(condition: boolean, message: string) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function timestampForIndex(index: number) {
+  return new Date(Date.UTC(2026, 6, 1 + index, 10, 0, 0)).toISOString();
 }

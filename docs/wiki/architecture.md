@@ -5,13 +5,13 @@
 Phase 1 实现文本版 Chat Agent Demo：
 
 ```text
-用户文本输入 -> Go 后端加载 Agent prompt + runtime always skills -> 并行启动快路流式承接和慢路结构化分析 -> OpenAI-compatible 模型 -> 意图栈 + 结构化候选 + intent_trace -> 风险门控 -> 前端自动执行/候选预览/待确认 -> open_contexts 状态注入下一轮
+用户文本输入 -> Go 后端加载 Agent prompt + runtime always skills -> 快路即时承接并判断 route -> 需要时进入慢路结构化分析 -> OpenAI-compatible 模型 -> 意图栈 + 结构化候选 + intent_trace -> 风险门控 -> 后端执行明确主动作或前端待确认 -> open_contexts 状态注入下一轮
 ```
 
 ## 模块边界
 
 - `vimo-go/internal/agent`：负责把自然语言转为 Vimo 记录预览。
-- `vimo-go/internal/agent`：支持快路即时承接和慢路结构化分析；HTTP 流式接口会并行启动两路，快路只生成流式自然语言承接，不执行保存、修改、删除或提醒动作。
+- `vimo-go/internal/agent`：支持快路即时承接和慢路结构化分析；HTTP 统一流式接口先执行快路，只有 `route=continue_slow` 时才把快路已展示文本作为 `fast_reply_context` 传给慢路继续处理。快路只生成自然语言承接，不执行保存、修改、删除或提醒动作。
 - `vimo-go/internal/agent`：保留旧版单记录字段，同时归一化 `primary_intent`、`secondary_intents`、`record_candidates`、`execution_plan` 和 `reply_strategy`，供前端逐步迁移。
 - `vimo-go/internal/agent`：归一化 `intent_trace` 和 `pending_state/context_state`，用于运行时诊断和下一轮未收口上下文注入。
 - `vimo-go/internal/llm`：定义大模型通用请求、响应、非流式 Provider 和可选流式 Provider 接口。

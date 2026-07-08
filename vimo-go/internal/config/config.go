@@ -59,6 +59,9 @@ func Load(root string) (*App, error) {
 
 	modelConfig, err := LoadModelConfig(modelConfigPath)
 	if err != nil {
+		if explicitModelConfigPath() {
+			return nil, fmt.Errorf("load model config %s: %w", modelConfigPath, err)
+		}
 		modelConfig = defaultModelConfig()
 	}
 
@@ -72,6 +75,11 @@ func Load(root string) (*App, error) {
 		Database:        loadDatabaseConfig(),
 		ModelConfig:     modelConfig,
 	}, nil
+}
+
+func explicitModelConfigPath() bool {
+	value, ok := os.LookupEnv("ACTIVE_MODEL_CONFIG")
+	return ok && strings.TrimSpace(value) != ""
 }
 
 func loadDatabaseConfig() DatabaseConfig {

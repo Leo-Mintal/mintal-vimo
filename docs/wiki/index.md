@@ -11,7 +11,8 @@ Mintal Vimo / 微默是一个极简 AI 记录 Demo。当前阶段验证文本输
 - MVP Demo 方案：`docs/mvp-demo-plan.md`
 - 后端模块说明：`docs/wiki/modules/vimo-go.md`
 - 前端模块说明：`docs/wiki/modules/vimo-web.md`
-- Agent 实时反馈链路改造方案：`docs/wiki/realtime-agent-feedback-plan.md`
+- 模型回复链路审计与恢复策略：`docs/wiki/model-reply-pipeline-recovery.md`
+- Agent 实时反馈链路改造方案：`docs/Agent 实时反馈链路改造方案.md`
 - Runtime Skills 自主选择与安全启用方案：`docs/wiki/runtime-skills-autonomy-plan.md`
 
 ## 架构说明入口
@@ -29,7 +30,16 @@ Mintal Vimo / 微默是一个极简 AI 记录 Demo。当前阶段验证文本输
 
 ## 最近更新记录
 
-- 2026-07-06：`vimo-go` 统一流事件顺序改为 `fast_thinking -> fast_delta -> slow_thinking -> final -> done`；`vimo-web` 按“快路思考-快路回复-慢路思考-慢路回复”分段即时渲染。
+- 2026-07-07：修复待确认删除任务在 `confirm_pending` 接续中被归一成创建/更新草稿的问题；多目标删除保留 `record_action=delete` 和 `related_ids`，pending id 只作为上下文 id。
+- 2026-07-07：新增 `docs/wiki/model-reply-pipeline-recovery.md`，并恢复慢路 JSON mode、显式模型配置错误、reasoning 不持久化和快慢路重复回复收敛。
+- 2026-07-07：修复快路回复可能先于快路思考链路完整展示的问题；前端会缓存 `fast_delta`，等待 `fast_done` 后按本地队列先渲染 reasoning 再渲染快路回复，同时关闭提醒的前端兼容更新会保留目标记录原时间。
+- 2026-07-07：修复关闭待办提醒后仍提示补全 `need_reminder` 且定时任务列表仍显示的问题；目标明确的关闭提醒会直接更新记录并从待提醒范围移除。
+- 2026-07-06：`vimo-web` 将 Agent 摘要完成态改为等待本地线性渲染完成后再显示“已处理”，确保思考文字先于回复展示，并把摘要字号收敛到正文级别。
+- 2026-07-06：`vimo-web` 将 `fast_done` 和 `done` 也作为 Agent 处理摘要完成态兜底，避免只走快路或缺失单个 `progress` 事件时一直显示“处理中”。
+- 2026-07-06：`vimo-web` 将 Agent 处理过程改成 Codex-like 的两块独立折叠摘要：快路和慢路分别显示“处理中/已处理 + 耗时”，完成后默认折叠，回复正文保持直接可见。
+- 2026-07-06：`POST /api/agent/messages/stream` 将主候选自动 Records 动作迁到后端执行，成功后发送 `record_execution` 和 `record.*.completed` 事件，前端只同步执行结果并保留待确认/手动确认流程。
+- 2026-07-06：`POST /api/agent/messages/stream` 新增统一 `progress` 事件，前端按消息级工作流时间线展示真实处理节点，并将输出阶段收敛为“即时承接/完整处理”而非固定四段顺序。
+- 2026-07-06：`vimo-go` 兼容文本流事件顺序调整为 `fast_thinking -> fast_delta -> slow_thinking -> final -> done`，用于让快路和慢路 reasoning/回复按生成链路依次出现。
 - 2026-07-06：`vimo-web` 思考过程正文改为视觉层逐字渲染：后端仍通过 `fast_thinking` / `final.thinking` 返回完整 reasoning，前端收到后用本地队列流式显示，完成状态仍等待服务端 `done`。
 - 2026-07-06：`vimo-web` 发送消息改为只消费后端统一 `POST /api/agent/messages/stream`，成功收尾统一依赖服务端 `done` 事件，快路 `chat_only` 也能结束等待态和思考计时。
 - 2026-07-06：移除设置页模型列表中的思考模式入口和模型能力图标；思考开关只保留在输入框内，模型设置页只负责选择模型。
@@ -58,7 +68,7 @@ Mintal Vimo / 微默是一个极简 AI 记录 Demo。当前阶段验证文本输
 - 2026-07-03：`vimo-web` 思考中等待态改为无头像、无气泡的“正在思考”文字，并将扫光限制在文字字形内。
 - 2026-07-03：`vimo-web` 对话消息、未收口上下文、待确认候选和当前待确认项改为本地缓存持久化；顶部待补全条支持逐条删除上下文，删除后同步清理缓存和 open context。
 - 2026-07-03：扩展 Vimo 运行时 `说人话` skill 为自然语言输出润色能力；`skills/always/00-shuorenhua-natural-language.md` 会自动拼入快路和慢路 prompt，覆盖聊天回复与可沉淀 `title/content` 字段，但不改变结构化协议。
-- 2026-07-03：新增 `docs/wiki/realtime-agent-feedback-plan.md`，沉淀未来把现有快路/慢路升级为 Codex 风格结构化实时反馈链路的方案，当前未改代码逻辑。
+- 2026-07-03：新增 `docs/Agent 实时反馈链路改造方案.md`，沉淀未来把现有快路/慢路升级为 Codex 风格结构化实时反馈链路的方案，当前未改代码逻辑。
 - 2026-07-03：副候选自动执行策略放开为“明确、字段完整且高置信的 `todo|memo|idea` 创建任务可自动执行”；日记、情绪、长期记忆和主动回访仍保守进入草稿或待确认。
 - 2026-07-03：前端风险门控改为按当前候选动作应用 hard stop，避免副候选的目标不唯一/删除风险阻断主候选的新建提醒；文档同步记录自动执行阈值。
 - 2026-07-03：修复待确认任务上下文注入：顶部 pending 候选现在会随 `open_contexts` 发给模型，并携带 `record_action/target_id/related_ids/execution_plan`；用户确认 pending 删除时复用上一条结构化动作执行，避免“是的”接不上原任务。
